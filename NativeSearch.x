@@ -90,11 +90,13 @@
 @interface YTSearchViewController : UIViewController
 - (void)ytmng_installNativeSearch;
 - (void)ytmng_runQuery:(NSString *)query;
+- (void)ytmng_setStatus:(NSString *)status;
 @end
 
 static char kResultsKey;
 static char kTableKey;
 static char kSearchBarKey;
+static char kStatusKey;
 
 // A result row: the display title plus the renderer we hand back to YouTube.
 @interface YTMNGResult : NSObject
@@ -142,6 +144,14 @@ static NSArray *resultsFromResponse(YTISearchResponse *response) {
 
 %hook YTSearchViewController
 
+// Everything here fails silently and invisibly otherwise: there is no console
+// to read on a sideloaded build, so surface the failure point in the table.
+%new
+- (void)ytmng_setStatus:(NSString *)status {
+    objc_setAssociatedObject(self, &kStatusKey, status, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [(UITableView *)objc_getAssociatedObject(self, &kTableKey) reloadData];
+}
+
 %new
 - (void)ytmng_installNativeSearch {
     if (objc_getAssociatedObject(self, &kTableKey)) return;
@@ -154,6 +164,9 @@ static NSArray *resultsFromResponse(YTISearchResponse *response) {
     searchBar.delegate = (id)self;
     searchBar.translatesAutoresizingMaskIntoConstraints = NO;
     searchBar.searchBarStyle = UISearchBarStyleMinimal;
+    searchBar.showsCancelButton = YES;
+    searchBar.returnKeyType = UIReturnKeySearch;
+    searchBar.enablesReturnKeyAutomatically = NO;
 
     UITableView *table = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain];
     table.dataSource = (id)self;
@@ -179,33 +192,59 @@ static NSArray *resultsFromResponse(YTISearchResponse *response) {
     objc_setAssociatedObject(self, &kSearchBarKey, searchBar, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(self, &kTableKey, table, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(self, &kResultsKey, [NSArray array], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-
-    [searchBar becomeFirstResponder];
+    objc_setAssociatedObject(self, &kStatusKey, @"Type a query, then press Search.",
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
 %new
 - (void)ytmng_runQuery:(NSString *)query {
     if (query.length == 0) return;
 
-    id services = [self valueForKey:@"services"];
-    if (![services respondsToSelector:@selector(searchService)]) return;
+    id services = nil;
+    @try {
+        services = [self valueForKey:@"services"];
+    } @catch (NSException *exception) {
+        [self ytmng_setStatus:@"step 1: no 'services' ivar on the search VC"];
+        return;
+    }
+    if (!services) { [self ytmng_setStatus:@"step 1: services is nil"]; return; }
+
+    if (![services respondsToSelector:@selector(searchService)]) {
+        [self ytmng_setStatus:[NSString stringWithFormat:
+            @"step 2: %@ has no -searchService", NSStringFromClass([services class])]];
+        return;
+    }
 
     id<YTMNGSearchService> service = [services performSelector:@selector(searchService)];
-    if (![service respondsToSelector:@selector(makeRequest:refresh:responseBlock:errorBlock:)]) return;
+    if (!service) { [self ytmng_setStatus:@"step 3: searchService returned nil"]; return; }
+
+    if (![service respondsToSelector:@selector(makeRequest:refresh:responseBlock:errorBlock:)]) {
+        [self ytmng_setStatus:[NSString stringWithFormat:
+            @"step 4: %@ has no -makeRequest:...", NSStringFromClass([service class])]];
+        return;
+    }
 
     id request = [%c(YTISearchRequest) searchRequestWithQuery:query params:nil];
-    if (!request) return;
+    if (!request) { [self ytmng_setStatus:@"step 5: could not build YTISearchRequest"]; return; }
+
+    [self ytmng_setStatus:@"Searching\u2026"];
 
     __weak typeof(self) weakSelf = self;
     [service makeRequest:request
                  refresh:NO
            responseBlock:^(id response) {
                NSArray *results = resultsFromResponse(response);
+               NSString *status = nil;
+               if (!response) status = @"step 6: response was nil";
+               else if (results.count == 0)
+                   status = [NSString stringWithFormat:@"step 7: parsed %@, found 0 videos",
+                             NSStringFromClass([response class])];
+
                dispatch_async(dispatch_get_main_queue(), ^{
                    typeof(self) strongSelf = weakSelf;
                    if (!strongSelf) return;
                    objc_setAssociatedObject(strongSelf, &kResultsKey, results, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-                   [(UITableView *)objc_getAssociatedObject(strongSelf, &kTableKey) reloadData];
+                   [strongSelf ytmng_setStatus:status];
                });
            }
               errorBlock:^(id error) {
@@ -213,7 +252,7 @@ static NSArray *resultsFromResponse(YTISearchResponse *response) {
                       typeof(self) strongSelf = weakSelf;
                       if (!strongSelf) return;
                       objc_setAssociatedObject(strongSelf, &kResultsKey, [NSArray array], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-                      [(UITableView *)objc_getAssociatedObject(strongSelf, &kTableKey) reloadData];
+                      [strongSelf ytmng_setStatus:[NSString stringWithFormat:@"step 6: error %@", error]];
                   });
               }];
 }
@@ -225,8 +264,19 @@ static NSArray *resultsFromResponse(YTISearchResponse *response) {
 }
 
 %new
+- (void)searchBarCancelButtonClicked:(UISearchBar *)searchBar {
+    [searchBar resignFirstResponder];
+    if (self.navigationController.viewControllers.count > 1)
+        [self.navigationController popViewControllerAnimated:YES];
+    else if (self.presentingViewController)
+        [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+%new
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    return (NSInteger)[(NSArray *)objc_getAssociatedObject(self, &kResultsKey) count];
+    NSUInteger count = [(NSArray *)objc_getAssociatedObject(self, &kResultsKey) count];
+    if (count > 0) return (NSInteger)count;
+    return objc_getAssociatedObject(self, &kStatusKey) ? 1 : 0;
 }
 
 %new
@@ -237,12 +287,14 @@ static NSArray *resultsFromResponse(YTISearchResponse *response) {
                                       reuseIdentifier:@"YTMNGResultCell"];
 
     NSArray *results = objc_getAssociatedObject(self, &kResultsKey);
-    if ((NSUInteger)indexPath.row < results.count) {
-        YTMNGResult *result = results[indexPath.row];
-        cell.textLabel.text = result.title;
-        cell.textLabel.numberOfLines = 2;
-        cell.backgroundColor = [UIColor clearColor];
-    }
+    cell.backgroundColor = [UIColor clearColor];
+    cell.textLabel.numberOfLines = 0;
+
+    if (results.count == 0)
+        cell.textLabel.text = objc_getAssociatedObject(self, &kStatusKey);
+    else if ((NSUInteger)indexPath.row < results.count)
+        cell.textLabel.text = ((YTMNGResult *)results[indexPath.row]).title;
+
     return cell;
 }
 
@@ -268,6 +320,17 @@ static NSArray *resultsFromResponse(YTISearchResponse *response) {
     %orig;
     if (!nativeSearchEnabled()) return;
     [self ytmng_installNativeSearch];
+}
+
+// becomeFirstResponder in viewDidLoad is a no-op: the view is not in a window
+// yet, so the keyboard never came up. Focus once the view is actually on
+// screen. Installing here too covers the case where the hierarchy is built
+// later than viewDidLoad -- the install guard makes it idempotent.
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    if (!nativeSearchEnabled()) return;
+    [self ytmng_installNativeSearch];
+    [(UISearchBar *)objc_getAssociatedObject(self, &kSearchBarKey) becomeFirstResponder];
 }
 
 // Keep YouTube's own search chrome out of the way without tearing it down, so
