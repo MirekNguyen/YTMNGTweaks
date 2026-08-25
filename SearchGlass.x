@@ -30,7 +30,11 @@ static UIVisualEffect *searchGlassEffect(void) {
     return send(glassClass, selector, 0);
 }
 
-static void applySearchGlass(UIView *view) {
+// Takes id rather than UIView *: these classes are declared elsewhere in the
+// headers with an opaque superclass, so a typed parameter fails -Werror even
+// though they are views at runtime.
+static void applySearchGlass(id container) {
+    UIView *view = container;
     if (!YTMNGGetBool(YTMNGGlassSearchKey)) return;
     if (view.bounds.size.height <= 0 || view.bounds.size.width <= 0) return;
 
