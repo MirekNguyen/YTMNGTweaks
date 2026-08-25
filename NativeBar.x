@@ -48,6 +48,7 @@ static UIVisualEffect *makeGlassEffect(NSInteger style) {
 @property (nonatomic, strong) UIVisualEffectView *blurView;
 @property (nonatomic, strong) UIView *separatorView;
 @property (nonatomic, readonly) UIView *contentView;
+@property (nonatomic, readonly) NSArray *itemViews;
 @end
 
 @interface YTPivotBarViewController : UIViewController
@@ -56,6 +57,8 @@ static UIVisualEffect *makeGlassEffect(NSInteger style) {
 
 // Horizontal inset that turns the full-width bar into a floating capsule.
 static const CGFloat YTMNGCapsuleInset = 12.0;
+// Breathing room above and below the icon row inside the capsule.
+static const CGFloat YTMNGCapsulePadding = 8.0;
 
 static BOOL nativeBarEnabled(void) {
     if (!YTMNGGetBool(YTMNGNativeBarKey)) return NO;
@@ -78,20 +81,32 @@ static void applyGlass(YTPivotBarView *bar) {
     bar.separatorView.hidden = YES;
     bar.backgroundColor = [UIColor clearColor];
 
-    // Reshape into the system floating capsule. contentView holds the row of
-    // item views, so insetting both keeps the icons inside the glass.
-    UIView *content = bar.contentView;
-    CGRect frame = content.frame;
-    if (frame.size.height <= 0 || frame.size.width <= 0) return;
+    // Reshape into the system floating capsule.
+    //
+    // Sizing this from contentView is wrong: contentView spans the bottom safe
+    // area, so the capsule ran far below the icons and left dead space under
+    // them. Measure the actual item views instead and pad around those, and
+    // leave contentView's own frame alone so the icons stay where YouTube put
+    // them.
+    CGRect items = CGRectNull;
+    for (UIView *item in bar.itemViews) {
+        if (![item isKindOfClass:[UIView class]] || item.hidden) continue;
+        CGRect f = [bar convertRect:item.bounds fromView:item];
+        items = CGRectIsNull(items) ? f : CGRectUnion(items, f);
+    }
+    if (CGRectIsNull(items) || items.size.height <= 0) return;
 
     CGFloat width = bar.bounds.size.width - (YTMNGCapsuleInset * 2);
     if (width <= 0) return;
 
-    CGRect capsule = CGRectMake(YTMNGCapsuleInset, frame.origin.y, width, frame.size.height);
-    if (!CGRectEqualToRect(blur.frame, capsule)) blur.frame = capsule;
-    if (!CGRectEqualToRect(content.frame, capsule)) content.frame = capsule;
+    CGRect capsule = CGRectMake(YTMNGCapsuleInset,
+                                CGRectGetMinY(items) - YTMNGCapsulePadding,
+                                width,
+                                CGRectGetHeight(items) + (YTMNGCapsulePadding * 2));
 
-    blur.layer.cornerRadius = frame.size.height / 2.0;
+    if (!CGRectEqualToRect(blur.frame, capsule)) blur.frame = capsule;
+
+    blur.layer.cornerRadius = CGRectGetHeight(capsule) / 2.0;
     blur.layer.cornerCurve = kCACornerCurveContinuous;
     blur.clipsToBounds = YES;
 }
