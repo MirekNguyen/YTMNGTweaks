@@ -80,6 +80,19 @@ static NSArray *appendCategory(NSArray *categories) {
     }
 
     NSMutableArray *rows = [NSMutableArray array];
+
+    [rows addObject:[%c(YTSettingsSectionItem)
+        switchItemWithTitle:@"Liquid Glass (experimental)"
+           titleDescription:@"Forces YouTube's built-in Liquid Glass styling. "
+                            @"Requires iOS 26 and a full app restart. This code "
+                            @"is unfinished in the app, so expect rough edges."
+    accessibilityIdentifier:nil
+                   switchOn:YTMNGGetBool(YTMNGLiquidGlassKey)
+                switchBlock:^BOOL(id cell, BOOL enabled) {
+                    YTMNGSetBool(YTMNGLiquidGlassKey, enabled);
+                    return YES;
+                }]];
+
     for (NSUInteger i = 0; i < YTMNGHideableTabsCount; i++) {
         YTMNGTabSpec spec = YTMNGHideableTabs[i];
         NSString *key = spec.key;

@@ -31,6 +31,9 @@ typedef struct {
 extern const YTMNGTabSpec YTMNGHideableTabs[];
 extern const NSUInteger YTMNGHideableTabsCount;
 
+// Master switch for YouTube's own Liquid Glass code path.
+#define YTMNGLiquidGlassKey @"YTMNGLiquidGlass"
+
 BOOL YTMNGGetBool(NSString *key);
 void YTMNGSetBool(NSString *key, BOOL value);
 
