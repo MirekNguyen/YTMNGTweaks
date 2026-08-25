@@ -24,14 +24,14 @@
 #import "YTMNGTweaks.h"
 
 const YTMNGTabSpec YTMNGHideableTabs[] = {
-    { @"YTMNGHideLive",      @"Live",      @"EgdzdHJlYW1z"   },
-    { @"YTMNGHideShorts",    @"Shorts",    @"EgZzaG9ydHM"    },
-    { @"YTMNGHidePlaylists", @"Playlists", @"EglwbGF5bGlzdHM" },
-    { @"YTMNGHidePosts",     @"Posts",     @"EgVwb3N0cw"     },
-    { @"YTMNGHideStore",     @"Store",     @"EgVzdG9yZQ"     },
-    { @"YTMNGHideReleases",  @"Releases",  @"EghyZWxlYXNlcw" },
-    { @"YTMNGHidePodcasts",  @"Podcasts",  @"Eghwb2RjYXN0cw" },
-    { @"YTMNGHideChannels",  @"Channels",  @"EghjaGFubmVscw" },
+    { @"YTMNGHideLive",      @"Live",      @"streams"   },
+    { @"YTMNGHideShorts",    @"Shorts",    @"shorts"    },
+    { @"YTMNGHidePlaylists", @"Playlists", @"playlists" },
+    { @"YTMNGHidePosts",     @"Posts",     @"posts"     },
+    { @"YTMNGHideStore",     @"Store",     @"store"     },
+    { @"YTMNGHideReleases",  @"Releases",  @"releases"  },
+    { @"YTMNGHidePodcasts",  @"Podcasts",  @"podcasts"  },
+    { @"YTMNGHideChannels",  @"Channels",  @"channels"  },
 };
 const NSUInteger YTMNGHideableTabsCount = sizeof(YTMNGHideableTabs) / sizeof(YTMNGTabSpec);
 
@@ -46,6 +46,32 @@ BOOL YTMNGGetBool(NSString *key) {
 
 void YTMNGSetBool(NSString *key, BOOL value) {
     [[NSUserDefaults standardUserDefaults] setBool:value forKey:key];
+}
+
+// params arrives as base64 that may be URL-safe (-_ instead of +/), percent
+// encoded, and stripped of = padding. Normalise all three, then read protobuf
+// field 2 (tag 0x12, one length byte, then the ASCII name).
+NSString *YTMNGTabNameFromParams(NSString *params) {
+    if (params.length == 0) return nil;
+
+    NSString *encoded = [params stringByRemovingPercentEncoding] ?: params;
+    encoded = [encoded stringByReplacingOccurrencesOfString:@"-" withString:@"+"];
+    encoded = [encoded stringByReplacingOccurrencesOfString:@"_" withString:@"/"];
+    while (encoded.length % 4 != 0)
+        encoded = [encoded stringByAppendingString:@"="];
+
+    NSData *decoded = [[NSData alloc] initWithBase64EncodedString:encoded
+        options:NSDataBase64DecodingIgnoreUnknownCharacters];
+    if (decoded.length < 3) return nil;
+
+    const unsigned char *bytes = (const unsigned char *)decoded.bytes;
+    if (bytes[0] != 0x12) return nil;
+
+    NSUInteger length = bytes[1];
+    if (length == 0 || 2 + length > decoded.length) return nil;
+
+    return [[NSString alloc] initWithBytes:bytes + 2 length:length
+                                  encoding:NSUTF8StringEncoding];
 }
 
 static NSString *paramsForTabEntry(id entry) {
@@ -64,12 +90,12 @@ static NSString *paramsForTabEntry(id entry) {
 }
 
 static BOOL shouldHideTabEntry(id entry) {
-    NSString *params = paramsForTabEntry(entry);
-    if (params.length == 0) return NO;
+    NSString *name = YTMNGTabNameFromParams(paramsForTabEntry(entry));
+    if (name.length == 0) return NO;
 
     for (NSUInteger i = 0; i < YTMNGHideableTabsCount; i++) {
         YTMNGTabSpec spec = YTMNGHideableTabs[i];
-        if ([params hasPrefix:spec.params] && YTMNGGetBool(spec.key))
+        if ([name isEqualToString:spec.name] && YTMNGGetBool(spec.key))
             return YES;
     }
     return NO;

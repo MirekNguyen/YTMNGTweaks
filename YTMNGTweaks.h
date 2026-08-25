@@ -6,20 +6,26 @@
 
 #define YTMNGPrefsDomain @"com.mireknguyen.ytmngtweaks"
 
-// Each hideable channel tab is keyed by the `browseEndpoint.params` value the
-// server sends for it. That value is a base64 protobuf blob (field 2 = a fixed
-// ASCII tab name) and is byte-identical in every UI language, so matching on it
-// survives locale changes in a way that matching the visible title would not.
+// Each hideable channel tab is identified by the `browseEndpoint.params` the
+// server sends for it. That value is base64 of a protobuf whose field 2 is a
+// fixed ASCII tab name ("streams", "shorts", ...), identical in every UI
+// language -- so it survives locale changes in a way the visible title cannot.
 //
-//   home EgRob21l | videos EgZ2aWRlb3M | shorts EgZzaG9ydHM
-//   streams (Live) EgdzdHJlYW1z | playlists EglwbGF5bGlzdHM
-//   posts EgVwb3N0cw | store EgVzdG9yZQ | releases EghyZWxlYXNlcw
-//   podcasts Eghwb2RjYXN0cw | channels EghjaGFubmVscw | about EgVhYm91dA
+// We base64-DECODE params and read that name out, rather than prefix-matching
+// the base64 text. Prefix matching is subtly broken: base64 encodes in 3-byte
+// groups, and the real params has a trailing blob appended after the name.
+// Unless the name chunk happens to be a multiple of 3 bytes, the characters at
+// the boundary differ from the name encoded on its own:
+//
+//   \x12\x07streams  = 9 bytes -> "EgdzdHJlYW1z"  + trailer -> "EgdzdHJlYW1z8gY..."  stable
+//   \x12\x06shorts   = 8 bytes -> "EgZzaG9ydHM"   + trailer -> "EgZzaG9ydHPyBgQ..."  diverges
+//
+// which is why Live (streams) matched and every other tab silently did not.
 
 typedef struct {
-    __unsafe_unretained NSString *key;     // NSUserDefaults key
-    __unsafe_unretained NSString *title;   // Settings row label
-    __unsafe_unretained NSString *params;  // browseEndpoint.params prefix
+    __unsafe_unretained NSString *key;    // NSUserDefaults key
+    __unsafe_unretained NSString *title;  // Settings row label
+    __unsafe_unretained NSString *name;   // decoded protobuf tab name
 } YTMNGTabSpec;
 
 extern const YTMNGTabSpec YTMNGHideableTabs[];
@@ -79,6 +85,9 @@ void YTMNGSetBool(NSString *key, BOOL value);
 @property (nonatomic, readonly) BOOL hasContents;
 @property (nonatomic, strong) YTIBrowseResponseSupportedRenderers *contents;
 @end
+
+// Decodes browseEndpoint.params to its protobuf tab name, or nil.
+NSString *YTMNGTabNameFromParams(NSString *params);
 
 // Shared entry point used by every hook site.
 void YTMNGFilterTabsInModel(id model);
