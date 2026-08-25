@@ -1,10 +1,20 @@
 // Adds a "YTMNGTweaks" row to the YouTube Settings screen.
 //
-// The app builds its settings list from two places:
-//   +[YTAppSettingsPresentationData settingsCategoryOrder]  -> ordered category IDs
-//   -[YTSettingsSectionItemManager updateSectionForCategory:withEntry:] -> rows
-// so we append a private category ID to the order, then populate it when the
-// manager asks about that ID.
+// 21.33.6 builds the settings list from groups, not from one flat category
+// list. YTSettingsGroupData vends the categories per group:
+//
+//   -accountCategories                    -> "Account"
+//   -videoandAudioPreferencesCategories   -> "Video and audio preferences"
+//   -helpAndPoliciesCategories            -> "Help and policies"
+//
+// which is exactly the section layout the app renders. The older
+// +[YTAppSettingsPresentationData settingsCategoryOrder] still exists but no
+// longer drives the screen, so appending to it alone renders nothing. We append
+// to the Account group and keep the legacy hook as a fallback for other builds.
+//
+// Rows themselves come from
+//   -[YTSettingsSectionItemManager updateSectionForCategory:withEntry:]
+// which is called once per category ID in the group.
 
 #import "YTMNGTweaks.h"
 
@@ -15,25 +25,45 @@ static const NSUInteger YTMNGSettingsCategory = 8064;
 + (NSArray *)settingsCategoryOrder;
 @end
 
+@interface YTSettingsGroupData : NSObject
+- (NSArray *)accountCategories;
+@end
+
 @interface YTSettingsSectionItemManager : NSObject
 - (void)updateSectionForCategory:(NSUInteger)category withEntry:(id)entry;
 @end
 
-%hook YTAppSettingsPresentationData
-
-+ (NSArray *)settingsCategoryOrder {
-    NSArray *order = %orig;
-    if (![order isKindOfClass:[NSArray class]]) return order;
+static NSArray *appendCategory(NSArray *categories) {
+    if (![categories isKindOfClass:[NSArray class]]) return categories;
 
     NSNumber *category = @(YTMNGSettingsCategory);
-    if ([order containsObject:category]) return order;
+    if ([categories containsObject:category]) return categories;
 
-    NSMutableArray *updated = [order mutableCopy];
+    NSMutableArray *updated = [categories mutableCopy];
     [updated addObject:category];
     return updated;
 }
 
+%hook YTSettingsGroupData
+
+- (NSArray *)accountCategories {
+    // %orig must be bound to a local first: logos mis-parses it when nested
+    // directly inside another call's argument list.
+    NSArray *categories = %orig;
+    return appendCategory(categories);
+}
+
 %end
+
+%hook YTAppSettingsPresentationData
+
++ (NSArray *)settingsCategoryOrder {
+    NSArray *categories = %orig;
+    return appendCategory(categories);
+}
+
+%end
+
 
 %hook YTSettingsSectionItemManager
 
