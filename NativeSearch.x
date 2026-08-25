@@ -68,30 +68,31 @@
 @property (nonatomic, strong) YTISearchResponseSupportedRenderers *contents;
 @end
 
-@interface YTISearchRequest : NSObject
-+ (instancetype)searchRequestWithQuery:(NSString *)query params:(NSString *)params;
-@end
-
 // Declared as uniquely-named protocols rather than @interfaces: the concrete
 // classes are declared elsewhere in the headers, and redeclaring them is a
 // duplicate-interface error (the same trap UIGlassEffect hit).
-@protocol YTMNGSearchService <NSObject>
-- (void)makeRequest:(id)request
-            refresh:(BOOL)refresh
-      responseBlock:(void (^)(id response))responseBlock
-         errorBlock:(void (^)(id error))errorBlock;
-@end
-
 @protocol YTMNGCommandEvent <NSObject>
 - (instancetype)initWithCommand:(id)command firstResponder:(id)responder;
 - (void)send;
 @end
 
 @interface YTSearchViewController : UIViewController
+- (void)performSearch:(NSString *)query selectedIndexPath:(id)indexPath searchMethod:(int)method;
 - (void)ytmng_installNativeSearch;
 - (void)ytmng_runQuery:(NSString *)query;
 - (void)ytmng_setStatus:(NSString *)status;
+- (void)ytmng_deliverResponse:(id)response;
 @end
+
+// The search service is not reachable from the services locator -- that is
+// YTLiveServices, which vends no search service at all. It is also not held as
+// an ivar by any class in the binary, so there is nothing to look up.
+//
+// Instead we drive YouTube's own -performSearch:selectedIndexPath:searchMethod:
+// and intercept the response on its way back through YTAppSearchService. That
+// also means YouTube builds the request, so the InnerTube context, auth and
+// params are all correct rather than hand-assembled.
+static __weak YTSearchViewController *gPendingSearchVC = nil;
 
 static char kResultsKey;
 static char kTableKey;
@@ -200,61 +201,27 @@ static NSArray *resultsFromResponse(YTISearchResponse *response) {
 - (void)ytmng_runQuery:(NSString *)query {
     if (query.length == 0) return;
 
-    id services = nil;
-    @try {
-        services = [self valueForKey:@"services"];
-    } @catch (NSException *exception) {
-        [self ytmng_setStatus:@"step 1: no 'services' ivar on the search VC"];
-        return;
-    }
-    if (!services) { [self ytmng_setStatus:@"step 1: services is nil"]; return; }
-
-    if (![services respondsToSelector:@selector(searchService)]) {
-        [self ytmng_setStatus:[NSString stringWithFormat:
-            @"step 2: %@ has no -searchService", NSStringFromClass([services class])]];
+    if (![self respondsToSelector:@selector(performSearch:selectedIndexPath:searchMethod:)]) {
+        [self ytmng_setStatus:@"step 1: no -performSearch:selectedIndexPath:searchMethod:"];
         return;
     }
 
-    id<YTMNGSearchService> service = [services performSelector:@selector(searchService)];
-    if (!service) { [self ytmng_setStatus:@"step 3: searchService returned nil"]; return; }
-
-    if (![service respondsToSelector:@selector(makeRequest:refresh:responseBlock:errorBlock:)]) {
-        [self ytmng_setStatus:[NSString stringWithFormat:
-            @"step 4: %@ has no -makeRequest:...", NSStringFromClass([service class])]];
-        return;
-    }
-
-    id request = [%c(YTISearchRequest) searchRequestWithQuery:query params:nil];
-    if (!request) { [self ytmng_setStatus:@"step 5: could not build YTISearchRequest"]; return; }
-
+    gPendingSearchVC = self;
     [self ytmng_setStatus:@"Searching\u2026"];
+    [self performSearch:query selectedIndexPath:nil searchMethod:0];
+}
 
-    __weak typeof(self) weakSelf = self;
-    [service makeRequest:request
-                 refresh:NO
-           responseBlock:^(id response) {
-               NSArray *results = resultsFromResponse(response);
-               NSString *status = nil;
-               if (!response) status = @"step 6: response was nil";
-               else if (results.count == 0)
-                   status = [NSString stringWithFormat:@"step 7: parsed %@, found 0 videos",
-                             NSStringFromClass([response class])];
+%new
+- (void)ytmng_deliverResponse:(id)response {
+    NSArray *results = resultsFromResponse(response);
+    NSString *status = nil;
+    if (!response) status = @"step 2: intercepted a nil response";
+    else if (results.count == 0)
+        status = [NSString stringWithFormat:@"step 3: parsed %@, found 0 videos",
+                  NSStringFromClass([response class])];
 
-               dispatch_async(dispatch_get_main_queue(), ^{
-                   typeof(self) strongSelf = weakSelf;
-                   if (!strongSelf) return;
-                   objc_setAssociatedObject(strongSelf, &kResultsKey, results, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-                   [strongSelf ytmng_setStatus:status];
-               });
-           }
-              errorBlock:^(id error) {
-                  dispatch_async(dispatch_get_main_queue(), ^{
-                      typeof(self) strongSelf = weakSelf;
-                      if (!strongSelf) return;
-                      objc_setAssociatedObject(strongSelf, &kResultsKey, [NSArray array], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-                      [strongSelf ytmng_setStatus:[NSString stringWithFormat:@"step 6: error %@", error]];
-                  });
-              }];
+    objc_setAssociatedObject(self, &kResultsKey, results, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [self ytmng_setStatus:status];
 }
 
 %new
@@ -349,6 +316,40 @@ static NSArray *resultsFromResponse(YTISearchResponse *response) {
     }
     [self.view bringSubviewToFront:table];
     [self.view bringSubviewToFront:searchBar];
+}
+
+%end
+
+// Intercepts the search response so it can be rendered natively. YouTube's own
+// handling still runs, so nothing downstream is starved of its response.
+%hook YTAppSearchService
+
+- (void)makeRequest:(id)request
+            refresh:(BOOL)refresh
+      responseBlock:(void (^)(id response))responseBlock
+         errorBlock:(void (^)(id error))errorBlock {
+
+    YTSearchViewController *target = gPendingSearchVC;
+    if (target) {
+        gPendingSearchVC = nil;
+        void (^original)(id) = responseBlock;
+        responseBlock = ^(id response) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [target ytmng_deliverResponse:response];
+            });
+            if (original) original(response);
+        };
+
+        void (^originalError)(id) = errorBlock;
+        errorBlock = ^(id error) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [target ytmng_setStatus:[NSString stringWithFormat:@"step 2: error %@", error]];
+            });
+            if (originalError) originalError(error);
+        };
+    }
+
+    %orig(request, refresh, responseBlock, errorBlock);
 }
 
 %end
