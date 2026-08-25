@@ -37,6 +37,13 @@ extern const NSUInteger YTMNGHideableTabsCount;
 // Replaces the pivot bar material with the system UIGlassEffect.
 #define YTMNGNativeBarKey @"YTMNGNativeBar"
 
+// Replaces the pivot bar entirely with a real UIKit UITabBar.
+#define YTMNGNativeTabBarKey @"YTMNGNativeTabBar"
+
+// Glass material behind the search field.
+#define YTMNGGlassSearchKey @"YTMNGGlassSearch"
+
+BOOL YTMNGNativeTabBarEnabled(void);
 BOOL YTMNGGetBool(NSString *key);
 void YTMNGSetBool(NSString *key, BOOL value);
 

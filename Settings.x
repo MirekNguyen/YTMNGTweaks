@@ -94,6 +94,30 @@ static NSArray *appendCategory(NSArray *categories) {
                 }]];
 
     [rows addObject:[%c(YTSettingsSectionItem)
+        switchItemWithTitle:@"Replace bottom bar with native tab bar"
+           titleDescription:@"Swaps YouTube's bar for a real UIKit UITabBar with "
+                            @"SF Symbol icons. Navigation is forwarded to YouTube, "
+                            @"so badges and the create button are not carried over. "
+                            @"Requires iOS 26."
+    accessibilityIdentifier:nil
+                   switchOn:YTMNGGetBool(YTMNGNativeTabBarKey)
+                switchBlock:^BOOL(id cell, BOOL enabled) {
+                    YTMNGSetBool(YTMNGNativeTabBarKey, enabled);
+                    return YES;
+                }]];
+
+    [rows addObject:[%c(YTSettingsSectionItem)
+        switchItemWithTitle:@"Glass search field"
+           titleDescription:@"Gives the search field the system Liquid Glass "
+                            @"material. Requires iOS 26."
+    accessibilityIdentifier:nil
+                   switchOn:YTMNGGetBool(YTMNGGlassSearchKey)
+                switchBlock:^BOOL(id cell, BOOL enabled) {
+                    YTMNGSetBool(YTMNGGlassSearchKey, enabled);
+                    return YES;
+                }]];
+
+    [rows addObject:[%c(YTSettingsSectionItem)
         switchItemWithTitle:@"Native glass bottom bar"
            titleDescription:@"Replaces the bottom bar's material with the real "
                             @"iOS UIGlassEffect and reshapes it into the system "

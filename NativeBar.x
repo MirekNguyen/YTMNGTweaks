@@ -61,6 +61,8 @@ static const CGFloat YTMNGCapsuleInset = 12.0;
 static const CGFloat YTMNGCapsulePadding = 8.0;
 
 static BOOL nativeBarEnabled(void) {
+    // The real UITabBar replacement supersedes this cosmetic restyle.
+    if (YTMNGNativeTabBarEnabled()) return NO;
     if (!YTMNGGetBool(YTMNGNativeBarKey)) return NO;
     // UIGlassEffect only exists on iOS 26+; below that there is nothing to do.
     return NSClassFromString(@"UIGlassEffect") != nil;
