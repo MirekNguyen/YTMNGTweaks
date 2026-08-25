@@ -1,0 +1,9 @@
+Package: com.mireknguyen.ytmngtweaks
+Name: YTMNGTweaks
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: Personal YouTube tweaks. Hides the Live tab on channel pages.
+Maintainer: MirekNguyen
+Author: MirekNguyen
+Section: Tweaks
+Depends: mobilesubstrate
