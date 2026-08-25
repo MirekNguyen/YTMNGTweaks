@@ -93,6 +93,18 @@ static NSArray *appendCategory(NSArray *categories) {
                     return YES;
                 }]];
 
+    [rows addObject:[%c(YTSettingsSectionItem)
+        switchItemWithTitle:@"Native glass bottom bar"
+           titleDescription:@"Replaces the bottom bar's material with the real "
+                            @"iOS UIGlassEffect and reshapes it into the system "
+                            @"floating capsule. Requires iOS 26."
+    accessibilityIdentifier:nil
+                   switchOn:YTMNGGetBool(YTMNGNativeBarKey)
+                switchBlock:^BOOL(id cell, BOOL enabled) {
+                    YTMNGSetBool(YTMNGNativeBarKey, enabled);
+                    return YES;
+                }]];
+
     for (NSUInteger i = 0; i < YTMNGHideableTabsCount; i++) {
         YTMNGTabSpec spec = YTMNGHideableTabs[i];
         NSString *key = spec.key;

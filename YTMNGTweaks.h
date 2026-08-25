@@ -34,6 +34,9 @@ extern const NSUInteger YTMNGHideableTabsCount;
 // Master switch for YouTube's own Liquid Glass code path.
 #define YTMNGLiquidGlassKey @"YTMNGLiquidGlass"
 
+// Replaces the pivot bar material with the system UIGlassEffect.
+#define YTMNGNativeBarKey @"YTMNGNativeBar"
+
 BOOL YTMNGGetBool(NSString *key);
 void YTMNGSetBool(NSString *key, BOOL value);
 

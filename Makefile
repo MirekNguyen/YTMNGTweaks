@@ -11,8 +11,8 @@ INSTALL_TARGET_PROCESSES = YouTube
 include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = YTMNGTweaks
-$(TWEAK_NAME)_FILES = Tweak.x Settings.x LiquidGlass.x
+$(TWEAK_NAME)_FILES = Tweak.x Settings.x LiquidGlass.x NativeBar.x
 $(TWEAK_NAME)_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
-$(TWEAK_NAME)_FRAMEWORKS = UIKit
+$(TWEAK_NAME)_FRAMEWORKS = UIKit QuartzCore
 
 include $(THEOS_MAKE_PATH)/tweak.mk
