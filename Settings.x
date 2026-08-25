@@ -107,6 +107,18 @@ static NSArray *appendCategory(NSArray *categories) {
                 }]];
 
     [rows addObject:[%c(YTSettingsSectionItem)
+        switchItemWithTitle:@"Native search screen"
+           titleDescription:@"Replaces YouTube's search with a native search bar "
+                            @"and a plain list of result titles. No thumbnails, "
+                            @"filters, voice or suggestions."
+    accessibilityIdentifier:nil
+                   switchOn:YTMNGGetBool(YTMNGNativeSearchKey)
+                switchBlock:^BOOL(id cell, BOOL enabled) {
+                    YTMNGSetBool(YTMNGNativeSearchKey, enabled);
+                    return YES;
+                }]];
+
+    [rows addObject:[%c(YTSettingsSectionItem)
         switchItemWithTitle:@"Glass search field"
            titleDescription:@"Gives the search field the system Liquid Glass "
                             @"material. Requires iOS 26."
