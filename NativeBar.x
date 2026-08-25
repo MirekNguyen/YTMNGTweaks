@@ -26,11 +26,23 @@
 
 #import "YTMNGTweaks.h"
 #import <QuartzCore/QuartzCore.h>
+#import <objc/message.h>
 
-@interface UIGlassEffect : UIVisualEffect
-+ (instancetype)effectWithStyle:(NSInteger)style;
-@property (nonatomic) BOOL interactive;
-@end
+// UIGlassEffect is declared by the iOS 26 SDK, so redeclaring it here is a
+// duplicate-interface error when building against that SDK -- but hard-coding
+// a direct call would break on older SDKs and require availability
+// annotations against our 14.0 deployment target. Resolve it purely at
+// runtime instead, which compiles on any SDK and keeps the guard honest.
+static UIVisualEffect *makeGlassEffect(NSInteger style) {
+    Class glassClass = NSClassFromString(@"UIGlassEffect");
+    if (!glassClass) return nil;
+
+    SEL selector = NSSelectorFromString(@"effectWithStyle:");
+    if (![glassClass respondsToSelector:selector]) return nil;
+
+    UIVisualEffect *(*send)(Class, SEL, NSInteger) = (void *)objc_msgSend;
+    return send(glassClass, selector, style);
+}
 
 @interface YTPivotBarView : UIView
 @property (nonatomic, strong) UIVisualEffectView *blurView;
@@ -58,7 +70,7 @@ static void applyGlass(YTPivotBarView *bar) {
 
     // Reassigning an effect is expensive and animates, so only do it once.
     if (![blur.effect isKindOfClass:glassClass]) {
-        UIVisualEffect *glass = [glassClass effectWithStyle:0];
+        UIVisualEffect *glass = makeGlassEffect(0);
         if (glass) blur.effect = glass;
     }
 
