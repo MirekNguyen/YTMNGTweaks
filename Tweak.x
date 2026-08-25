@@ -1,117 +1,155 @@
-// YTMNGTweaks — hide the "Live" tab on YouTube channel pages.
+// YTMNGTweaks — hide channel page tabs (Live, Shorts, ...).
 //
-// Approach: filter the browse response before the view controller renders it.
-// Channel tabs arrive as:
-//   YTIBrowseResponse
-//     .contents (YTIBrowseResponseSupportedRenderers)
-//       .singleColumnBrowseResultsRenderer.tabsArray  (iPhone)
-//       .twoColumnBrowseResultsRenderer.tabsArray     (iPad / wide layouts)
-//         -> YTIBrowseTabSupportedRenderers
-//              .tabRenderer / .expandableTabRenderer
-//                .endpoint.browseEndpoint.params
+// Where the tabs actually come from
+// ---------------------------------
+// The channel tab strip is driven by YTTabsViewController, NOT by
+// YTBrowseResponseViewController. The two are unrelated classes -- dumping the
+// superclass chain of 21.33.6 gives:
 //
-// We match on `params`, not on the title. `params` is a base64 protobuf blob
-// that is identical in every UI language:
-//   Home "EgVob21l" | Videos "EgZ2aWRlb3M" | Shorts "EgZzaG9ydHM"
-//   Live "EgdzdHJlYW1z" (= \x12\x07"streams") | Playlists "EglwbGF5bGlzdHM"
-// Matching @"Live" would break on any non-English locale.
+//   YTBrowseResponseViewController -> YTVariableHeightHeaderViewController
+//                                  -> YTBaseViewController
+//   YTTabsViewController           -> (superclass not in image)
 //
-// Verified against YouTube 21.33.6 (class-dumped).
+// so hooking the browse response view controller never affects channel tabs.
+// YTTabsViewController receives its data through -loadWithModel: and friends,
+// and the model exposes `tabsArray` (an NSMutableArray of
+// YTIBrowseTabSupportedRenderers), the same array type carried by
+// YTISingleColumnBrowseResultsRenderer.
+//
+// We mutate that array in place at the earliest point we see it, so the tab
+// titles, the index maps and the content view controllers are all built from
+// one already-filtered source. Filtering a copy instead would desync
+// -rebuildIndexMapsWithTabsArray: from the model and mismatch tab content.
 
-#import <UIKit/UIKit.h>
+#import "YTMNGTweaks.h"
 
-static NSString *const kLiveTabParamsPrefix = @"EgdzdHJlYW1z";
+const YTMNGTabSpec YTMNGHideableTabs[] = {
+    { @"YTMNGHideLive",      @"Live",      @"EgdzdHJlYW1z"   },
+    { @"YTMNGHideShorts",    @"Shorts",    @"EgZzaG9ydHM"    },
+    { @"YTMNGHidePlaylists", @"Playlists", @"EglwbGF5bGlzdHM" },
+    { @"YTMNGHidePosts",     @"Posts",     @"EgVwb3N0cw"     },
+    { @"YTMNGHideStore",     @"Store",     @"EgVzdG9yZQ"     },
+    { @"YTMNGHideReleases",  @"Releases",  @"EghyZWxlYXNlcw" },
+    { @"YTMNGHidePodcasts",  @"Podcasts",  @"Eghwb2RjYXN0cw" },
+    { @"YTMNGHideChannels",  @"Channels",  @"EghjaGFubmVscw" },
+};
+const NSUInteger YTMNGHideableTabsCount = sizeof(YTMNGHideableTabs) / sizeof(YTMNGTabSpec);
 
-@interface YTIBrowseEndpoint : NSObject
-@property (nonatomic, copy) NSString *params;
-@property (nonatomic, copy) NSString *browseId;
-@end
-
-@interface YTICommand : NSObject
-@property (nonatomic, strong) YTIBrowseEndpoint *browseEndpoint;
-@property (nonatomic, readonly) BOOL hasBrowseEndpoint;
-@end
-
-@interface YTITabRenderer : NSObject
-@property (nonatomic, strong) YTICommand *endpoint;
-@property (nonatomic, readonly) BOOL hasEndpoint;
-@property (nonatomic, copy) NSString *title;
-@property (nonatomic, copy) NSString *tabIdentifier;
-@end
-
-@interface YTIExpandableTabRenderer : NSObject
-@property (nonatomic, strong) YTICommand *endpoint;
-@property (nonatomic, copy) NSString *title;
-@end
-
-@interface YTIBrowseTabSupportedRenderers : NSObject
-@property (nonatomic, readonly) BOOL hasTabRenderer;
-@property (nonatomic, strong) YTITabRenderer *tabRenderer;
-@property (nonatomic, readonly) BOOL hasExpandableTabRenderer;
-@property (nonatomic, strong) YTIExpandableTabRenderer *expandableTabRenderer;
-@end
-
-@interface YTISingleColumnBrowseResultsRenderer : NSObject
-@property (nonatomic, strong) NSMutableArray<YTIBrowseTabSupportedRenderers *> *tabsArray;
-@end
-
-@interface YTITwoColumnBrowseResultsRenderer : NSObject
-@property (nonatomic, strong) NSMutableArray<YTIBrowseTabSupportedRenderers *> *tabsArray;
-@end
-
-@interface YTIBrowseResponseSupportedRenderers : NSObject
-@property (nonatomic, readonly) BOOL hasSingleColumnBrowseResultsRenderer;
-@property (nonatomic, strong) YTISingleColumnBrowseResultsRenderer *singleColumnBrowseResultsRenderer;
-@property (nonatomic, readonly) BOOL hasTwoColumnBrowseResultsRenderer;
-@property (nonatomic, strong) YTITwoColumnBrowseResultsRenderer *twoColumnBrowseResultsRenderer;
-@end
-
-@interface YTIBrowseResponse : NSObject
-@property (nonatomic, readonly) BOOL hasContents;
-@property (nonatomic, strong) YTIBrowseResponseSupportedRenderers *contents;
-@end
-
-static BOOL isLiveTab(YTIBrowseTabSupportedRenderers *entry) {
-    YTICommand *endpoint = nil;
-    if ([entry respondsToSelector:@selector(hasTabRenderer)] && entry.hasTabRenderer) {
-        endpoint = entry.tabRenderer.endpoint;
-    } else if ([entry respondsToSelector:@selector(hasExpandableTabRenderer)] && entry.hasExpandableTabRenderer) {
-        endpoint = entry.expandableTabRenderer.endpoint;
-    }
-    if (!endpoint || ![endpoint respondsToSelector:@selector(hasBrowseEndpoint)] || !endpoint.hasBrowseEndpoint)
-        return NO;
-
-    NSString *params = endpoint.browseEndpoint.params;
-    return params.length > 0 && [params hasPrefix:kLiveTabParamsPrefix];
+BOOL YTMNGGetBool(NSString *key) {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    // Hiding Live is the reason this tweak exists, so it defaults to on.
+    // Everything else stays off until explicitly enabled.
+    if ([defaults objectForKey:key] == nil)
+        return [key isEqualToString:@"YTMNGHideLive"];
+    return [defaults boolForKey:key];
 }
 
-static void stripLiveTab(NSMutableArray<YTIBrowseTabSupportedRenderers *> *tabs) {
-    if (![tabs isKindOfClass:[NSMutableArray class]] || tabs.count == 0) return;
+void YTMNGSetBool(NSString *key, BOOL value) {
+    [[NSUserDefaults standardUserDefaults] setBool:value forKey:key];
+}
+
+static NSString *paramsForTabEntry(id entry) {
+    if (![entry isKindOfClass:%c(YTIBrowseTabSupportedRenderers)]) return nil;
+
+    YTIBrowseTabSupportedRenderers *tab = (YTIBrowseTabSupportedRenderers *)entry;
+    YTICommand *endpoint = nil;
+
+    if (tab.hasTabRenderer)
+        endpoint = tab.tabRenderer.endpoint;
+    else if (tab.hasExpandableTabRenderer)
+        endpoint = tab.expandableTabRenderer.endpoint;
+
+    if (!endpoint || !endpoint.hasBrowseEndpoint) return nil;
+    return endpoint.browseEndpoint.params;
+}
+
+static BOOL shouldHideTabEntry(id entry) {
+    NSString *params = paramsForTabEntry(entry);
+    if (params.length == 0) return NO;
+
+    for (NSUInteger i = 0; i < YTMNGHideableTabsCount; i++) {
+        YTMNGTabSpec spec = YTMNGHideableTabs[i];
+        if ([params hasPrefix:spec.params] && YTMNGGetBool(spec.key))
+            return YES;
+    }
+    return NO;
+}
+
+static void filterTabsArray(id maybeArray) {
+    if (![maybeArray isKindOfClass:[NSMutableArray class]]) return;
+
+    NSMutableArray *tabs = (NSMutableArray *)maybeArray;
+    if (tabs.count == 0) return;
 
     NSIndexSet *doomed = [tabs indexesOfObjectsPassingTest:
-        ^BOOL(YTIBrowseTabSupportedRenderers *entry, NSUInteger idx, BOOL *stop) {
-            return isLiveTab(entry);
+        ^BOOL(id entry, NSUInteger idx, BOOL *stop) {
+            return shouldHideTabEntry(entry);
         }];
-    if (doomed.count > 0) [tabs removeObjectsAtIndexes:doomed];
+
+    // Never strip every tab -- an empty strip leaves the channel page blank.
+    if (doomed.count > 0 && doomed.count < tabs.count)
+        [tabs removeObjectsAtIndexes:doomed];
 }
 
-static void filterBrowseResponse(id response) {
-    if (![response isKindOfClass:%c(YTIBrowseResponse)]) return;
+void YTMNGFilterTabsInModel(id model) {
+    if (!model) return;
 
-    YTIBrowseResponse *browse = (YTIBrowseResponse *)response;
-    if (!browse.hasContents) return;
+    if ([model isKindOfClass:%c(YTIBrowseResponse)]) {
+        YTIBrowseResponse *browse = (YTIBrowseResponse *)model;
+        if (!browse.hasContents) return;
+        YTIBrowseResponseSupportedRenderers *contents = browse.contents;
+        if (contents.hasSingleColumnBrowseResultsRenderer)
+            filterTabsArray(contents.singleColumnBrowseResultsRenderer.tabsArray);
+        if (contents.hasTwoColumnBrowseResultsRenderer)
+            filterTabsArray(contents.twoColumnBrowseResultsRenderer.tabsArray);
+        return;
+    }
 
-    YTIBrowseResponseSupportedRenderers *contents = browse.contents;
-    if (contents.hasSingleColumnBrowseResultsRenderer)
-        stripLiveTab(contents.singleColumnBrowseResultsRenderer.tabsArray);
-    if (contents.hasTwoColumnBrowseResultsRenderer)
-        stripLiveTab(contents.twoColumnBrowseResultsRenderer.tabsArray);
+    // The model handed to YTTabsViewController is not a fixed class across
+    // versions, so probe for the accessor rather than naming a type.
+    if ([model respondsToSelector:@selector(tabsArray)])
+        filterTabsArray([model valueForKey:@"tabsArray"]);
 }
 
+// ---------------------------------------------------------------------------
+
+%hook YTTabsViewController
+
+- (void)loadWithModel:(id)model {
+    YTMNGFilterTabsInModel(model);
+    %orig;
+}
+
+- (void)loadWithModel:(id)model reloadContentViewControllers:(BOOL)reload {
+    YTMNGFilterTabsInModel(model);
+    %orig;
+}
+
+- (void)updateWithModel:(id)model isDefaultModel:(BOOL)isDefault reloadContentViewControllers:(BOOL)reload {
+    YTMNGFilterTabsInModel(model);
+    %orig;
+}
+
+// Backstops. These receive the model's own array, so mutating in place here is
+// a no-op once the calls above have already filtered it.
+- (void)reloadTabTitlesWithTabsArray:(id)tabs {
+    filterTabsArray(tabs);
+    %orig;
+}
+
+- (void)rebuildIndexMapsWithTabsArray:(id)tabs {
+    filterTabsArray(tabs);
+    %orig;
+}
+
+%end
+
+// Harmless on channel pages, but catches any other surface that renders tabs
+// straight from a browse response.
 %hook YTBrowseResponseViewController
 
 - (void)handleInitialOrContinuationBrowseResponse:(id)response {
-    filterBrowseResponse(response);
+    YTMNGFilterTabsInModel(response);
     %orig;
 }
 

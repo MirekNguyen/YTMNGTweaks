@@ -11,7 +11,7 @@ INSTALL_TARGET_PROCESSES = YouTube
 include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = YTMNGTweaks
-$(TWEAK_NAME)_FILES = Tweak.x
+$(TWEAK_NAME)_FILES = Tweak.x Settings.x
 $(TWEAK_NAME)_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
 $(TWEAK_NAME)_FRAMEWORKS = UIKit
 
