@@ -46,6 +46,9 @@ extern const NSUInteger YTMNGHideableTabsCount;
 // Replaces YouTube's search screen with a native UIKit search UI.
 #define YTMNGNativeSearchKey @"YTMNGNativeSearch"
 
+// GitHub-style glass capsule behind the header action buttons.
+#define YTMNGGlassHeaderKey @"YTMNGGlassHeader"
+
 BOOL YTMNGNativeTabBarEnabled(void);
 BOOL YTMNGGetBool(NSString *key);
 void YTMNGSetBool(NSString *key, BOOL value);

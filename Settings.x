@@ -119,6 +119,17 @@ static NSArray *appendCategory(NSArray *categories) {
                 }]];
 
     [rows addObject:[%c(YTSettingsSectionItem)
+        switchItemWithTitle:@"Glass header buttons"
+           titleDescription:@"Groups the header actions into a glass capsule, "
+                            @"like the GitHub app. Requires iOS 26."
+    accessibilityIdentifier:nil
+                   switchOn:YTMNGGetBool(YTMNGGlassHeaderKey)
+                switchBlock:^BOOL(id cell, BOOL enabled) {
+                    YTMNGSetBool(YTMNGGlassHeaderKey, enabled);
+                    return YES;
+                }]];
+
+    [rows addObject:[%c(YTSettingsSectionItem)
         switchItemWithTitle:@"Glass search field"
            titleDescription:@"Gives the search field the system Liquid Glass "
                             @"material. Requires iOS 26."

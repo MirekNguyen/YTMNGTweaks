@@ -122,6 +122,12 @@ static NSString *symbolForIdentifier(NSString *identifier, BOOL selected) {
     if (!tabBar) {
         tabBar = [[UITabBar alloc] initWithFrame:self.bounds];
         tabBar.delegate = (id)self;
+        // The selected-tab capsule is drawn by UIKit on iOS 26; we only set the
+        // tint so the selected item reads clearly against the glass, as in the
+        // GitHub app. Setting a UITabBarAppearance here would opt back out of
+        // the new styling.
+        tabBar.tintColor = [UIColor systemBlueColor];
+        tabBar.unselectedItemTintColor = [UIColor secondaryLabelColor];
         [self addSubview:tabBar];
         objc_setAssociatedObject(self, &kTabBarKey, tabBar, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
