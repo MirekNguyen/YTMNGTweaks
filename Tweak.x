@@ -24,6 +24,7 @@
 #import "YTMNGTweaks.h"
 
 const YTMNGTabSpec YTMNGHideableTabs[] = {
+    { @"YTMNGHideHome",      @"Home",      @"home"      },
     { @"YTMNGHideLive",      @"Live",      @"streams"   },
     { @"YTMNGHideShorts",    @"Shorts",    @"shorts"    },
     { @"YTMNGHidePlaylists", @"Playlists", @"playlists" },
@@ -113,8 +114,22 @@ static void filterTabsArray(id maybeArray) {
         }];
 
     // Never strip every tab -- an empty strip leaves the channel page blank.
-    if (doomed.count > 0 && doomed.count < tabs.count)
-        [tabs removeObjectsAtIndexes:doomed];
+    if (doomed.count == 0 || doomed.count >= tabs.count) return;
+
+    [tabs removeObjectsAtIndexes:doomed];
+
+    // Hiding Home removes the tab the server marked selected, which would leave
+    // the page with no active tab. Promote the first survivor so Videos (or
+    // whatever remains) opens by default.
+    BOOL hasSelection = NO;
+    for (YTIBrowseTabSupportedRenderers *entry in tabs) {
+        if (entry.hasTabRenderer && entry.tabRenderer.selected) { hasSelection = YES; break; }
+    }
+    if (hasSelection) return;
+
+    for (YTIBrowseTabSupportedRenderers *entry in tabs) {
+        if (entry.hasTabRenderer) { entry.tabRenderer.selected = YES; break; }
+    }
 }
 
 void YTMNGFilterTabsInModel(id model) {

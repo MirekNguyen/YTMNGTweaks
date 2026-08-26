@@ -119,6 +119,17 @@ static NSArray *appendCategory(NSArray *categories) {
                 }]];
 
     [rows addObject:[%c(YTSettingsSectionItem)
+        switchItemWithTitle:@"Hide Subscribe and Join"
+           titleDescription:@"Removes the Subscribe pill and the Join button "
+                            @"from channel pages."
+    accessibilityIdentifier:nil
+                   switchOn:YTMNGGetBool(YTMNGHideSubscribeKey)
+                switchBlock:^BOOL(id cell, BOOL enabled) {
+                    YTMNGSetBool(YTMNGHideSubscribeKey, enabled);
+                    return YES;
+                }]];
+
+    [rows addObject:[%c(YTSettingsSectionItem)
         switchItemWithTitle:@"Glass header buttons"
            titleDescription:@"Groups the header actions into a glass capsule, "
                             @"like the GitHub app. Requires iOS 26."

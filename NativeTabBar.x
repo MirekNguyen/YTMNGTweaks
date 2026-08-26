@@ -93,7 +93,17 @@ static NSString *symbolForIdentifier(NSString *identifier, BOOL selected) {
     NSMutableArray *renderers = [NSMutableArray array];
     NSMutableArray *items = [NSMutableArray array];
 
-    for (YTPivotBarItemView *itemView in self.itemViews) {
+    // itemViews is in construction order, not visual order, which put "You"
+    // second. Sort by horizontal position so the native bar matches the layout.
+    NSArray *ordered = [self.itemViews sortedArrayUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
+        CGFloat ax = [self convertRect:a.bounds fromView:a].origin.x;
+        CGFloat bx = [self convertRect:b.bounds fromView:b].origin.x;
+        if (ax < bx) return NSOrderedAscending;
+        if (ax > bx) return NSOrderedDescending;
+        return NSOrderedSame;
+    }];
+
+    for (YTPivotBarItemView *itemView in ordered) {
         if (itemView.hidden) continue;
 
         YTIPivotBarItemRenderer *renderer = [itemView valueForKey:@"renderer"];

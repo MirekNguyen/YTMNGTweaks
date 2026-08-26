@@ -20,6 +20,11 @@ static char kRightGlassKey;
 static const CGFloat YTMNGHeaderPadH = 10.0;
 static const CGFloat YTMNGHeaderPadV = 6.0;
 
+// Header hierarchies contain large invisible UIButtons -- full-width tap
+// targets, the banner, the channel row. Including those blew the union rect out
+// to a giant blob covering the status bar. Only icon-sized controls qualify.
+static const CGFloat YTMNGMaxButtonSide = 64.0;
+
 static UIVisualEffect *headerGlassEffect(void) {
     Class glassClass = NSClassFromString(@"UIGlassEffect");
     if (!glassClass) return nil;
@@ -34,7 +39,10 @@ static UIVisualEffect *headerGlassEffect(void) {
 static void collectButtons(UIView *view, NSMutableArray *out) {
     for (UIView *subview in view.subviews) {
         if (subview.hidden || subview.alpha < 0.01) continue;
-        if ([subview isKindOfClass:[UIButton class]] && subview.bounds.size.width > 0)
+        CGSize size = subview.bounds.size;
+        BOOL iconSized = size.width > 0 && size.height > 0 &&
+                         size.width <= YTMNGMaxButtonSide && size.height <= YTMNGMaxButtonSide;
+        if ([subview isKindOfClass:[UIButton class]] && iconSized)
             [out addObject:subview];
         else
             collectButtons(subview, out);
@@ -43,6 +51,7 @@ static void collectButtons(UIView *view, NSMutableArray *out) {
 
 // Places (or moves) a glass view behind the union of `buttons`.
 static void applyGroupGlass(UIView *header, NSArray *buttons, const void *key) {
+    if (header.bounds.size.width <= 0) return;
     UIVisualEffectView *glass = objc_getAssociatedObject(header, key);
 
     if (buttons.count == 0) {
@@ -58,6 +67,11 @@ static void applyGroupGlass(UIView *header, NSArray *buttons, const void *key) {
     if (CGRectIsNull(group) || group.size.height <= 0) return;
 
     group = CGRectInset(group, -YTMNGHeaderPadH, -YTMNGHeaderPadV);
+
+    // Never let the capsule escape the header, or it rides up into the status
+    // bar and off the screen edge.
+    group = CGRectIntersection(group, header.bounds);
+    if (CGRectIsNull(group) || CGRectIsEmpty(group)) return;
 
     if (!glass) {
         UIVisualEffect *effect = headerGlassEffect();

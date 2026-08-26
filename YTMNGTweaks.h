@@ -40,6 +40,9 @@ extern const NSUInteger YTMNGHideableTabsCount;
 // Replaces the pivot bar entirely with a real UIKit UITabBar.
 #define YTMNGNativeTabBarKey @"YTMNGNativeTabBar"
 
+// Hides the Subscribe and Join buttons on channel pages.
+#define YTMNGHideSubscribeKey @"YTMNGHideSubscribe"
+
 // Glass material behind the search field.
 #define YTMNGGlassSearchKey @"YTMNGGlassSearch"
 
@@ -68,6 +71,7 @@ void YTMNGSetBool(NSString *key, BOOL value);
 @end
 
 @interface YTITabRenderer : NSObject
+@property (nonatomic) BOOL selected;
 @property (nonatomic, strong) YTICommand *endpoint;
 @property (nonatomic, copy) NSString *title;
 @property (nonatomic, copy) NSString *tabIdentifier;
