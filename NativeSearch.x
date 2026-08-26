@@ -1,157 +1,65 @@
-// Replaces YouTube's search screen with a native UIKit search UI.
+// Native search screen: a UIKit search bar with YouTube's own autocomplete
+// suggestions, handing off to YouTube's results screen on submit.
 //
-// This is a real reimplementation, not a restyle: a UISearchBar plus a plain
-// UITableView of result titles, in the style of a stock iOS search screen.
-// YouTube's own search view hierarchy is hidden behind it.
+// Why suggestions rather than a native results list
+// -------------------------------------------------
+// Search results no longer arrive as videoRenderer/compactVideoRenderer.
+// YTIItemSectionSupportedRenderers has 210 renderer variants including
+// hasElementRenderer, and search results now come back as Elements payloads --
+// a serialized layout format, not a plain protobuf message with a title field.
+// Walking for videoRenderer therefore found zero results every time. Decoding
+// Elements is a much larger problem, so the native list is dropped and YouTube
+// renders results.
 //
-// Verified call chain (YouTube 21.33.6)
-// -------------------------------------
-//   [self valueForKey:@"services"]              -> id<YTServices>
-//   [services searchService]                    -> YTAppSearchService
-//   +[YTISearchRequest searchRequestWithQuery:params:]
-//   -[YTAppSearchService makeRequest:refresh:responseBlock:errorBlock:]
-//     -> YTISearchResponse
-//          .contents.sectionListRenderer.contentsArray
-//            -> YTISectionListSupportedRenderers.itemSectionRenderer
-//                 .contentsArray
-//                   -> YTIItemSectionSupportedRenderers
-//                        .videoRenderer / .compactVideoRenderer
-//                          .title (YTIFormattedString) + .navigationEndpoint
+// How the data is obtained
+// ------------------------
+// Not by constructing services. The earlier attempt to look up a search service
+// failed because the services locator is YTLiveServices, which vends none, and
+// no class holds one as an ivar. Instead we drive YouTube's own methods:
 //
-// Tapping a row sends YTVideoCellTappedActionResponderEvent -- the app's own
-// "a video cell was tapped" event -- so playback is handled by YouTube rather
-// than reimplemented.
+//   -[YTSearchViewController setSearchText:forceRefreshSuggestions:]
+//        triggers a suggest fetch
+//   -[YTSearchViewController setSuggestions:]
+//        is where they land -- hooked to render them natively
+//   -[YTSearchViewController performSearch:selectedIndexPath:searchMethod:]
+//        runs the search, with YouTube building the request
 //
-// Scope, deliberately: titles only. No thumbnails, channel names, durations,
-// filters, voice search or suggestions. Those are all separate InnerTube
-// renderers and would each need their own extraction and layout.
+// So context, auth and params are all YouTube's, not hand-assembled.
 
 #import "YTMNGTweaks.h"
 #import <objc/runtime.h>
 
-@interface YTIFormattedString : NSObject
-- (NSString *)stringWithFormattingRemoved;
-@end
-
-@interface YTIVideoRenderer : NSObject
-@property (nonatomic, strong) YTIFormattedString *title;
-@property (nonatomic, strong) YTICommand *navigationEndpoint;
-@end
-
-@interface YTIItemSectionSupportedRenderers : NSObject
-@property (nonatomic, readonly) BOOL hasVideoRenderer;
-@property (nonatomic, strong) YTIVideoRenderer *videoRenderer;
-@property (nonatomic, readonly) BOOL hasCompactVideoRenderer;
-@property (nonatomic, strong) YTIVideoRenderer *compactVideoRenderer;
-@end
-
-@interface YTIItemSectionRenderer : NSObject
-@property (nonatomic, strong) NSMutableArray *contentsArray;
-@end
-
-@interface YTISectionListSupportedRenderers : NSObject
-@property (nonatomic, readonly) BOOL hasItemSectionRenderer;
-@property (nonatomic, strong) YTIItemSectionRenderer *itemSectionRenderer;
-@end
-
-@interface YTISectionListRenderer : NSObject
-@property (nonatomic, strong) NSMutableArray *contentsArray;
-@end
-
-@interface YTISearchResponseSupportedRenderers : NSObject
-@property (nonatomic, readonly) BOOL hasSectionListRenderer;
-@property (nonatomic, strong) YTISectionListRenderer *sectionListRenderer;
-@end
-
-@interface YTISearchResponse : NSObject
-@property (nonatomic, readonly) BOOL hasContents;
-@property (nonatomic, strong) YTISearchResponseSupportedRenderers *contents;
-@end
-
-// Declared as uniquely-named protocols rather than @interfaces: the concrete
-// classes are declared elsewhere in the headers, and redeclaring them is a
-// duplicate-interface error (the same trap UIGlassEffect hit).
-@protocol YTMNGCommandEvent <NSObject>
-- (instancetype)initWithCommand:(id)command firstResponder:(id)responder;
-- (void)send;
+@interface YTSearchSuggestion : NSObject
+@property (nonatomic, readonly) NSString *text;
 @end
 
 @interface YTSearchViewController : UIViewController
 - (void)performSearch:(NSString *)query selectedIndexPath:(id)indexPath searchMethod:(int)method;
+- (void)setSearchText:(NSString *)text forceRefreshSuggestions:(BOOL)refresh;
 - (void)ytmng_installNativeSearch;
-- (void)ytmng_runQuery:(NSString *)query;
-- (void)ytmng_setStatus:(NSString *)status;
-- (void)ytmng_deliverResponse:(id)response;
+- (void)ytmng_submitQuery:(NSString *)query;
 @end
 
-// The search service is not reachable from the services locator -- that is
-// YTLiveServices, which vends no search service at all. It is also not held as
-// an ivar by any class in the binary, so there is nothing to look up.
-//
-// Instead we drive YouTube's own -performSearch:selectedIndexPath:searchMethod:
-// and intercept the response on its way back through YTAppSearchService. That
-// also means YouTube builds the request, so the InnerTube context, auth and
-// params are all correct rather than hand-assembled.
-static __weak YTSearchViewController *gPendingSearchVC = nil;
-
-static char kResultsKey;
+static char kSuggestionsKey;
 static char kTableKey;
 static char kSearchBarKey;
-static char kStatusKey;
-
-// A result row: the display title plus the renderer we hand back to YouTube.
-@interface YTMNGResult : NSObject
-@property (nonatomic, copy) NSString *title;
-@property (nonatomic, strong) id renderer;
-@end
-@implementation YTMNGResult
-@end
 
 static BOOL nativeSearchEnabled(void) {
     return YTMNGGetBool(YTMNGNativeSearchKey);
 }
 
-// Walks the search response and pulls out video titles and their renderers.
-static NSArray *resultsFromResponse(YTISearchResponse *response) {
-    NSMutableArray *results = [NSMutableArray array];
-    if (![response respondsToSelector:@selector(hasContents)] || !response.hasContents) return results;
-
-    YTISearchResponseSupportedRenderers *contents = response.contents;
-    if (!contents.hasSectionListRenderer) return results;
-
-    for (YTISectionListSupportedRenderers *section in contents.sectionListRenderer.contentsArray) {
-        if (![section respondsToSelector:@selector(hasItemSectionRenderer)]) continue;
-        if (!section.hasItemSectionRenderer) continue;
-
-        for (YTIItemSectionSupportedRenderers *entry in section.itemSectionRenderer.contentsArray) {
-            YTIVideoRenderer *video = nil;
-            if ([entry respondsToSelector:@selector(hasVideoRenderer)] && entry.hasVideoRenderer)
-                video = entry.videoRenderer;
-            else if ([entry respondsToSelector:@selector(hasCompactVideoRenderer)] && entry.hasCompactVideoRenderer)
-                video = entry.compactVideoRenderer;
-            if (!video) continue;
-
-            NSString *title = [video.title stringWithFormattingRemoved];
-            if (title.length == 0) continue;
-
-            YTMNGResult *result = [[YTMNGResult alloc] init];
-            result.title = title;
-            result.renderer = video;
-            [results addObject:result];
-        }
+// Suggestion objects expose -text; fall back defensively so an unexpected model
+// degrades to something readable rather than an empty list.
+static NSString *suggestionText(id suggestion) {
+    if ([suggestion isKindOfClass:[NSString class]]) return suggestion;
+    if ([suggestion respondsToSelector:@selector(text)]) {
+        id value = [suggestion performSelector:@selector(text)];
+        if ([value isKindOfClass:[NSString class]]) return value;
     }
-    return results;
+    return nil;
 }
 
 %hook YTSearchViewController
-
-// Everything here fails silently and invisibly otherwise: there is no console
-// to read on a sideloaded build, so surface the failure point in the table.
-%new
-- (void)ytmng_setStatus:(NSString *)status {
-    objc_setAssociatedObject(self, &kStatusKey, status, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    [(UITableView *)objc_getAssociatedObject(self, &kTableKey) reloadData];
-}
 
 %new
 - (void)ytmng_installNativeSearch {
@@ -168,6 +76,7 @@ static NSArray *resultsFromResponse(YTISearchResponse *response) {
     searchBar.showsCancelButton = YES;
     searchBar.returnKeyType = UIReturnKeySearch;
     searchBar.enablesReturnKeyAutomatically = NO;
+    searchBar.autocorrectionType = UITextAutocorrectionTypeNo;
 
     UITableView *table = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain];
     table.dataSource = (id)self;
@@ -192,42 +101,28 @@ static NSArray *resultsFromResponse(YTISearchResponse *response) {
 
     objc_setAssociatedObject(self, &kSearchBarKey, searchBar, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(self, &kTableKey, table, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    objc_setAssociatedObject(self, &kResultsKey, [NSArray array], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    objc_setAssociatedObject(self, &kStatusKey, @"Type a query, then press Search.",
-                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(self, &kSuggestionsKey, [NSArray array], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
 %new
-- (void)ytmng_runQuery:(NSString *)query {
+- (void)ytmng_submitQuery:(NSString *)query {
     if (query.length == 0) return;
-
-    if (![self respondsToSelector:@selector(performSearch:selectedIndexPath:searchMethod:)]) {
-        [self ytmng_setStatus:@"step 1: no -performSearch:selectedIndexPath:searchMethod:"];
-        return;
-    }
-
-    gPendingSearchVC = self;
-    [self ytmng_setStatus:@"Searching\u2026"];
-    [self performSearch:query selectedIndexPath:nil searchMethod:0];
+    [(UISearchBar *)objc_getAssociatedObject(self, &kSearchBarKey) resignFirstResponder];
+    if ([self respondsToSelector:@selector(performSearch:selectedIndexPath:searchMethod:)])
+        [self performSearch:query selectedIndexPath:nil searchMethod:0];
 }
 
-%new
-- (void)ytmng_deliverResponse:(id)response {
-    NSArray *results = resultsFromResponse(response);
-    NSString *status = nil;
-    if (!response) status = @"step 2: intercepted a nil response";
-    else if (results.count == 0)
-        status = [NSString stringWithFormat:@"step 3: parsed %@, found 0 videos",
-                  NSStringFromClass([response class])];
+// --- UISearchBarDelegate ---
 
-    objc_setAssociatedObject(self, &kResultsKey, results, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    [self ytmng_setStatus:status];
+%new
+- (void)searchBar:(UISearchBar *)searchBar textDidChange:(NSString *)text {
+    if ([self respondsToSelector:@selector(setSearchText:forceRefreshSuggestions:)])
+        [self setSearchText:text forceRefreshSuggestions:YES];
 }
 
 %new
 - (void)searchBarSearchButtonClicked:(UISearchBar *)searchBar {
-    [searchBar resignFirstResponder];
-    [self ytmng_runQuery:searchBar.text];
+    [self ytmng_submitQuery:searchBar.text];
 }
 
 %new
@@ -239,29 +134,25 @@ static NSArray *resultsFromResponse(YTISearchResponse *response) {
         [self dismissViewControllerAnimated:YES completion:nil];
 }
 
+// --- UITableView ---
+
 %new
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    NSUInteger count = [(NSArray *)objc_getAssociatedObject(self, &kResultsKey) count];
-    if (count > 0) return (NSInteger)count;
-    return objc_getAssociatedObject(self, &kStatusKey) ? 1 : 0;
+    return (NSInteger)[(NSArray *)objc_getAssociatedObject(self, &kSuggestionsKey) count];
 }
 
 %new
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"YTMNGResultCell"];
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"YTMNGSuggestionCell"];
     if (!cell)
         cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault
-                                      reuseIdentifier:@"YTMNGResultCell"];
+                                      reuseIdentifier:@"YTMNGSuggestionCell"];
 
-    NSArray *results = objc_getAssociatedObject(self, &kResultsKey);
+    NSArray *suggestions = objc_getAssociatedObject(self, &kSuggestionsKey);
+    if ((NSUInteger)indexPath.row < suggestions.count)
+        cell.textLabel.text = suggestions[indexPath.row];
+
     cell.backgroundColor = [UIColor clearColor];
-    cell.textLabel.numberOfLines = 0;
-
-    if (results.count == 0)
-        cell.textLabel.text = objc_getAssociatedObject(self, &kStatusKey);
-    else if ((NSUInteger)indexPath.row < results.count)
-        cell.textLabel.text = ((YTMNGResult *)results[indexPath.row]).title;
-
     return cell;
 }
 
@@ -269,18 +160,32 @@ static NSArray *resultsFromResponse(YTISearchResponse *response) {
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
 
-    NSArray *results = objc_getAssociatedObject(self, &kResultsKey);
-    if ((NSUInteger)indexPath.row >= results.count) return;
+    NSArray *suggestions = objc_getAssociatedObject(self, &kSuggestionsKey);
+    if ((NSUInteger)indexPath.row >= suggestions.count) return;
 
-    YTIVideoRenderer *video = ((YTMNGResult *)results[indexPath.row]).renderer;
-    id command = video.navigationEndpoint;
-    if (!command) return;
+    NSString *query = suggestions[indexPath.row];
+    ((UISearchBar *)objc_getAssociatedObject(self, &kSearchBarKey)).text = query;
+    [self ytmng_submitQuery:query];
+}
 
-    // The app's own "video cell tapped" event, so YouTube performs playback.
-    Class eventClass = %c(YTVideoCellTappedActionResponderEvent);
-    id<YTMNGCommandEvent> event =
-        [(id<YTMNGCommandEvent>)[eventClass alloc] initWithCommand:command firstResponder:self];
-    if ([event respondsToSelector:@selector(send)]) [event send];
+// --- YouTube hooks ---
+
+// Where suggestions land after -setSearchText:forceRefreshSuggestions:.
+- (void)setSuggestions:(NSArray *)suggestions {
+    %orig;
+    if (!nativeSearchEnabled()) return;
+
+    UITableView *table = objc_getAssociatedObject(self, &kTableKey);
+    if (!table) return;
+
+    NSMutableArray *texts = [NSMutableArray array];
+    for (id suggestion in suggestions) {
+        NSString *text = suggestionText(suggestion);
+        if (text.length > 0) [texts addObject:text];
+    }
+
+    objc_setAssociatedObject(self, &kSuggestionsKey, texts, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [table reloadData];
 }
 
 - (void)viewDidLoad {
@@ -290,9 +195,8 @@ static NSArray *resultsFromResponse(YTISearchResponse *response) {
 }
 
 // becomeFirstResponder in viewDidLoad is a no-op: the view is not in a window
-// yet, so the keyboard never came up. Focus once the view is actually on
-// screen. Installing here too covers the case where the hierarchy is built
-// later than viewDidLoad -- the install guard makes it idempotent.
+// yet. Installing here too covers a hierarchy built later than viewDidLoad --
+// the install guard makes it idempotent.
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
     if (!nativeSearchEnabled()) return;
@@ -300,8 +204,6 @@ static NSArray *resultsFromResponse(YTISearchResponse *response) {
     [(UISearchBar *)objc_getAssociatedObject(self, &kSearchBarKey) becomeFirstResponder];
 }
 
-// Keep YouTube's own search chrome out of the way without tearing it down, so
-// dismissal and lifecycle still work.
 - (void)viewDidLayoutSubviews {
     %orig;
     if (!nativeSearchEnabled()) return;
@@ -316,40 +218,6 @@ static NSArray *resultsFromResponse(YTISearchResponse *response) {
     }
     [self.view bringSubviewToFront:table];
     [self.view bringSubviewToFront:searchBar];
-}
-
-%end
-
-// Intercepts the search response so it can be rendered natively. YouTube's own
-// handling still runs, so nothing downstream is starved of its response.
-%hook YTAppSearchService
-
-- (void)makeRequest:(id)request
-            refresh:(BOOL)refresh
-      responseBlock:(void (^)(id response))responseBlock
-         errorBlock:(void (^)(id error))errorBlock {
-
-    YTSearchViewController *target = gPendingSearchVC;
-    if (target) {
-        gPendingSearchVC = nil;
-        void (^original)(id) = responseBlock;
-        responseBlock = ^(id response) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [target ytmng_deliverResponse:response];
-            });
-            if (original) original(response);
-        };
-
-        void (^originalError)(id) = errorBlock;
-        errorBlock = ^(id error) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [target ytmng_setStatus:[NSString stringWithFormat:@"step 2: error %@", error]];
-            });
-            if (originalError) originalError(error);
-        };
-    }
-
-    %orig(request, refresh, responseBlock, errorBlock);
 }
 
 %end
