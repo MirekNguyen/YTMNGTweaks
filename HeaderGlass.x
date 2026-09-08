@@ -47,16 +47,42 @@ static UIVisualEffect *headerGlassEffect(void) {
     return send(glassClass, selector, 0);
 }
 
+// A UIButton can be laid out and unhidden while rendering nothing at all: the
+// account avatar before its image loads, a button whose renderer has not
+// arrived yet, a spacer. Wrapping one of those in glass produced the empty grey
+// blobs -- a capsule with no content in it, which reads as a rendering bug
+// because it looks like one.
+//
+// Requiring some actual content is the difference between "a button exists
+// here" and "something is drawn here", and only the second is worth a capsule.
+static BOOL buttonHasVisibleContent(UIButton *button) {
+    if (button.currentImage || button.currentTitle.length > 0) return YES;
+    if (button.currentBackgroundImage) return YES;
+
+    // Custom header buttons draw through child views rather than the UIButton
+    // image/title properties, so accept any visible, non-empty descendant.
+    for (UIView *subview in button.subviews) {
+        if (subview.hidden || subview.alpha < 0.01) continue;
+        if (subview.bounds.size.width > 0 && subview.bounds.size.height > 0) {
+            if ([subview isKindOfClass:[UIImageView class]] && !((UIImageView *)subview).image)
+                continue;
+            return YES;
+        }
+    }
+    return NO;
+}
+
 static void collectButtons(UIView *view, NSMutableArray *out) {
     for (UIView *subview in view.subviews) {
         if (subview.hidden || subview.alpha < 0.01) continue;
         CGSize size = subview.bounds.size;
         BOOL iconSized = size.width > 0 && size.height > 0 &&
                          size.width <= YTMNGMaxButtonSide && size.height <= YTMNGMaxButtonSide;
-        if ([subview isKindOfClass:[UIButton class]] && iconSized)
-            [out addObject:subview];
-        else
+        if ([subview isKindOfClass:[UIButton class]] && iconSized) {
+            if (buttonHasVisibleContent((UIButton *)subview)) [out addObject:subview];
+        } else {
             collectButtons(subview, out);
+        }
     }
 }
 
@@ -85,9 +111,14 @@ static void applyGroupGlass(UIView *header, NSArray *buttons, const void *key) {
 
     group = CGRectInset(group, -YTMNGHeaderPadH, -YTMNGHeaderPadV);
 
-    // Never let the capsule escape the header, or it rides up into the status
-    // bar and off the screen edge.
-    group = CGRectIntersection(group, header.bounds);
+    // Clamping to header.bounds is not enough: the header extends underneath
+    // the status bar, so a capsule could still ride up into the clock and
+    // signal bars (and did -- a stray circle floating over the status bar).
+    // Clamp to the safe area instead, which is where the header actually draws.
+    CGRect safe = UIEdgeInsetsInsetRect(header.bounds, header.safeAreaInsets);
+    if (CGRectIsEmpty(safe)) safe = header.bounds;
+
+    group = CGRectIntersection(group, safe);
     if (CGRectIsNull(group) || CGRectIsEmpty(group)) return;
 
     // Final sanity check. If the group is still header-sized, the buttons we
