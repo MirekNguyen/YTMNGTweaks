@@ -53,6 +53,7 @@
 - (void)ytmng_syncSelectionFromYouTube;
 - (void)ytmng_layoutSearchButton;
 - (void)ytmng_searchTapped;
+- (void)ytmng_hideYouTubeChrome;
 @end
 
 static char kTabBarKey;
@@ -284,9 +285,18 @@ static CGRect itemRowRect(YTPivotBarView *bar) {
         UIVisualEffect *effect = tabBarGlassEffect();
         if (!effect) return;  // pre-iOS 26: no glass to match the bar with
 
-        button = [UIButton buttonWithType:UIButtonTypeSystem];
+        // UIButtonTypeSystem tints the glyph with the inherited tintColor,
+        // which here resolves against the glass and washes out to a barely
+        // visible grey. A .custom button with an explicitly white template
+        // image keeps the same contrast as the tab bar icons beside it.
+        button = [UIButton buttonWithType:UIButtonTypeCustom];
         button.tintColor = [UIColor labelColor];
-        [button setImage:[UIImage systemImageNamed:@"magnifyingglass"] forState:UIControlStateNormal];
+        UIImageSymbolConfiguration *config =
+            [UIImageSymbolConfiguration configurationWithPointSize:18.0
+                                                           weight:UIImageSymbolWeightSemibold];
+        UIImage *glyph = [[UIImage systemImageNamed:@"magnifyingglass" withConfiguration:config]
+            imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+        [button setImage:glyph forState:UIControlStateNormal];
         [button addTarget:self
                    action:NSSelectorFromString(@"ytmng_searchTapped")
          forControlEvents:UIControlEventTouchUpInside];
@@ -319,6 +329,24 @@ static CGRect itemRowRect(YTPivotBarView *bar) {
     glass.clipsToBounds = YES;
 
     [self bringSubviewToFront:button];
+}
+
+// Strips YouTube's own bar chrome so only the UITabBar's glass shows.
+//
+// This has to be callable from more than layoutSubviews. YouTube repaints the
+// pivot bar in -styleBackgroundColors on every theme and scroll-state change,
+// and NativeBar.x -- which is where that hook used to be handled -- bails out
+// entirely when the native tab bar is enabled. So nothing was re-clearing the
+// background, and YouTube's grey slab came back and sat behind the floating
+// capsule as a full-width band.
+%new
+- (void)ytmng_hideYouTubeChrome {
+    self.contentView.hidden = YES;
+    self.blurView.hidden = YES;
+    self.separatorView.hidden = YES;
+    self.backgroundColor = [UIColor clearColor];
+    self.layer.backgroundColor = [UIColor clearColor].CGColor;
+    self.opaque = NO;
 }
 
 // UITabBarDelegate. Hands the renderer straight back to YouTube.
@@ -363,10 +391,7 @@ static CGRect itemRowRect(YTPivotBarView *bar) {
     if (!tabBar) return;
 
     // Google's icons and its own material would otherwise show through.
-    self.contentView.hidden = YES;
-    self.blurView.hidden = YES;
-    self.separatorView.hidden = YES;
-    self.backgroundColor = [UIColor clearColor];
+    [self ytmng_hideYouTubeChrome];
 
     // The search button eats the trailing edge, so the tab bar has to give it
     // back rather than sit underneath.
@@ -381,6 +406,13 @@ static CGRect itemRowRect(YTPivotBarView *bar) {
     [self ytmng_layoutSearchButton];
     [self bringSubviewToFront:tabBar];
     [self ytmng_syncSelectionFromYouTube];
+}
+
+// YouTube restyles the bar background on theme and scroll-state changes, which
+// puts the flat grey back over (well, behind) the glass.
+- (void)styleBackgroundColors {
+    %orig;
+    if (YTMNGNativeTabBarEnabled()) [self ytmng_hideYouTubeChrome];
 }
 
 // Keeps the native selection in sync when YouTube changes tabs itself, e.g.
