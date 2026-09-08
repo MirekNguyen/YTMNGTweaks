@@ -22,8 +22,8 @@ Broader workspace context: see the workspace-level `AGENTS.md` one directory up.
 | `Settings.x` | Adds the "YTMNGTweaks" settings section (category ID `8064`) via `YTSettingsGroupData -accountCategories`, with a legacy `+settingsCategoryOrder` fallback, and builds rows in `YTSettingsSectionItemManager -updateSectionForCategory:withEntry:`. |
 | `LiquidGlass.x` | Forces `YTColdConfig -mainAppCoreClientIos27EnableLiquidGlass` / `-enableLiquidGlassEffect` to YES. Only effective if `UIDesignRequiresCompatibility` is `false` in the app Info.plist — the YTPlusM workflow patches that. |
 | `NativeBar.x` | Runtime-resolved `UIGlassEffect` on `YTPivotBarView.blurView`, reshaped as an iOS 26 floating capsule. |
-| `NativeTabBar.x` | Real `UITabBar` + SF Symbols replacing the pivot bar; taps forwarded to `-[YTPivotBarViewController didTapItemWithRenderer:]` via the `_renderer` ivar. `%new` helpers `ytmng_rebuildNativeTabBar`, `ytmng_selectIdentifier:`. |
-| `SearchGlass.x` | Glass view behind `YTSearchBoxView` (associated object `kGlassViewKey`). |
+| `NativeTabBar.x` | Real `UITabBar` + SF Symbols replacing the pivot bar; taps forwarded to `-[YTPivotBarViewController didTapItemWithRenderer:]` via the `_renderer` ivar. Selection is restored from `YTPivotBarItemView -selected` at build time and re-synced from `YTPivotBarViewController -selectedPivotIdentifier` on layout, because `-selectItemWithPivotIdentifier:` fires before the tab bar exists. Also owns the optional detached glass search button, which calls `YTHeaderViewController -didPressSearchButton:`. |
+| `SearchGlass.x` | Glass view behind `YTSearchBoxView` (associated object `kGlassViewKey`). **`YTSearchBarView` is deliberately not hooked** — it is a `UITextField` subclass and inserting a subview into it drew the capsule across the whole topbar. |
 | `NativeSearch.x` | Native UIKit search bar driving YouTube's own suggestions (`setSearchText:forceRefreshSuggestions:`, `-setSuggestions:`, `performSearch:selectedIndexPath:searchMethod:`). Results are Elements payloads, rendered by YouTube. |
 | `HeaderGlass.x` | Glass capsule grouping header icon buttons (≤64pt per side), pad H10/V6. |
 | `ChannelHeader.x` | Hides `subscribeSwitch` / `sponsorButton` in `YTC4TabbedHeaderView -layoutSubviews`. |
@@ -31,7 +31,7 @@ Broader workspace context: see the workspace-level `AGENTS.md` one directory up.
 ## Defaults keys
 
 `YTMNGLiquidGlass`, `YTMNGNativeBar`, `YTMNGNativeTabBar`, `YTMNGGlassSearch`,
-`YTMNGNativeSearch`, `YTMNGGlassHeader`, `YTMNGHideSubscribe`, and the tab keys
+`YTMNGNativeSearch`, `YTMNGGlassHeader`, `YTMNGHideSubscribe`, `YTMNGTabBarSearch`, and the tab keys
 `YTMNGHideHome/Live/Shorts/Playlists/Posts/Store/Releases/Podcasts/Channels`.
 
 **`YTMNGHideLive` is the only key that defaults to ON.** Everything else is opt-in.
@@ -50,3 +50,7 @@ Broader workspace context: see the workspace-level `AGENTS.md` one directory up.
 Append one line per session. Newest last.
 
 - **2026-09-08** — Documented the repo (this file). No code changes; `main` @ `195b6d4`, v2.6.0.
+- **2026-09-08** — v2.7.0 (`7fd8183`). Fixed: blank tab bar selection at launch,
+  systemBlue tab tint, stale search text on re-entry, duplicate clear button,
+  search bar running off the screen edges, oversized header capsule. Added the
+  detached tab bar search button (`YTMNGTabBarSearch`).
