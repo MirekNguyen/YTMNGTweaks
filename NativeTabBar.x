@@ -54,6 +54,8 @@
 - (void)ytmng_layoutSearchButton;
 - (void)ytmng_searchTapped;
 - (void)ytmng_hideYouTubeChrome;
+- (void)ytmng_openSearchScreen;
+- (CGFloat)ytmng_searchSideForItems:(CGRect)items;
 @end
 
 static char kTabBarKey;
@@ -61,6 +63,7 @@ static char kIdentifiersKey;
 static char kRenderersKey;
 static char kPendingSelectionKey;
 static char kSearchButtonKey;
+static char kExpandingKey;
 
 // Gap between the tab bar capsule and the detached search button.
 static const CGFloat YTMNGSearchGap = 8.0;
@@ -262,11 +265,80 @@ static CGRect itemRowRect(YTPivotBarView *bar) {
 // --- Detached search button ---
 
 %new
-- (void)ytmng_searchTapped {
+- (void)ytmng_openSearchScreen {
     UIViewController *host = findSearchHost(self.window.rootViewController);
     SEL press = NSSelectorFromString(@"didPressSearchButton:");
     if ([host respondsToSelector:press])
         ((void (*)(id, SEL, id))objc_msgSend)(host, press, nil);
+}
+
+// Grows the circle into a full-width capsule before the search screen arrives,
+// so the button reads as turning into the search field rather than as a button
+// that happens to push a screen.
+//
+// The capsule radius is height/2 and the height does not change, so the shape
+// stays correct throughout without animating cornerRadius separately -- the
+// circle simply widens.
+%new
+- (void)ytmng_searchTapped {
+    UIButton *button = objc_getAssociatedObject(self, &kSearchButtonKey);
+    if (!button) {
+        [self ytmng_openSearchScreen];
+        return;
+    }
+
+    UIView *glass = [button viewWithTag:0x59544D47];
+    CGRect collapsed = button.frame;
+    CGRect expanded = CGRectMake(YTMNGSearchEdgeInset,
+                                 CGRectGetMinY(collapsed),
+                                 CGRectGetWidth(self.bounds) - (YTMNGSearchEdgeInset * 2),
+                                 CGRectGetHeight(collapsed));
+    if (CGRectGetWidth(expanded) <= CGRectGetWidth(collapsed)) {
+        [self ytmng_openSearchScreen];
+        return;
+    }
+
+    objc_setAssociatedObject(self, &kExpandingKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+    // The glyph slides to the leading edge as it widens, landing where a search
+    // field's icon sits.
+    [UIView animateWithDuration:0.26
+                          delay:0
+         usingSpringWithDamping:0.9
+          initialSpringVelocity:0
+                        options:UIViewAnimationOptionCurveEaseOut
+                     animations:^{
+        button.frame = expanded;
+        glass.frame = button.bounds;
+        button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+        button.contentEdgeInsets = UIEdgeInsetsMake(0, 18, 0, 0);
+    } completion:^(__unused BOOL finished) {
+        [self ytmng_openSearchScreen];
+
+        // Collapse once the search screen has covered us, so the button is
+        // already a circle again by the time it is next visible.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            button.frame = collapsed;
+            glass.frame = button.bounds;
+            button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentCenter;
+            button.contentEdgeInsets = UIEdgeInsetsZero;
+            objc_setAssociatedObject(self, &kExpandingKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            [self setNeedsLayout];
+        });
+    }];
+}
+
+// Padding around the icon row, capped so the circle cannot grow taller than
+// the bar that contains it. Without the cap the button was sized purely from
+// the item row, overflowed the pivot bar's bounds and got clipped -- the flat
+// bottom edge on the magnifier.
+%new
+- (CGFloat)ytmng_searchSideForItems:(CGRect)items {
+    CGFloat side = CGRectGetHeight(items) + 16.0;
+    CGFloat available = CGRectGetHeight(self.bounds) - 2.0;
+    if (available > 0 && side > available) side = available;
+    return side;
 }
 
 %new
@@ -277,6 +349,10 @@ static CGRect itemRowRect(YTPivotBarView *bar) {
         button.hidden = YES;
         return;
     }
+
+    // Mid-expansion the button owns its own frame; re-laying it out here would
+    // fight the animation.
+    if ([objc_getAssociatedObject(self, &kExpandingKey) boolValue]) return;
 
     CGRect items = itemRowRect(self);
     if (CGRectIsNull(items) || items.size.height <= 0) return;
@@ -316,7 +392,7 @@ static CGRect itemRowRect(YTPivotBarView *bar) {
 
     // A circle the same height as the tab bar capsule, pinned to the trailing
     // edge -- the layout Messages/Zalo use for a detached action button.
-    CGFloat side = CGRectGetHeight(items) + 16.0;
+    CGFloat side = [self ytmng_searchSideForItems:items];
     CGRect frame = CGRectMake(CGRectGetWidth(self.bounds) - YTMNGSearchEdgeInset - side,
                               CGRectGetMidY(items) - (side / 2.0),
                               side, side);
@@ -399,7 +475,7 @@ static CGRect itemRowRect(YTPivotBarView *bar) {
     if (tabBarSearchEnabled()) {
         CGRect items = itemRowRect(self);
         if (!CGRectIsNull(items) && items.size.height > 0)
-            frame.size.width -= (CGRectGetHeight(items) + 16.0) + YTMNGSearchGap;
+            frame.size.width -= [self ytmng_searchSideForItems:items] + YTMNGSearchGap;
     }
     if (!CGRectEqualToRect(tabBar.frame, frame)) tabBar.frame = frame;
 

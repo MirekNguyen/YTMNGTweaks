@@ -275,7 +275,15 @@ static NSString *suggestionText(id suggestion) {
     %orig;
     if (!nativeSearchEnabled()) return;
     [self ytmng_installNativeSearch];
-    [(UISearchBar *)objc_getAssociatedObject(self, &kSearchBarKey) becomeFirstResponder];
+
+    UISearchBar *searchBar = objc_getAssociatedObject(self, &kSearchBarKey);
+    [searchBar becomeFirstResponder];
+
+    // The field is pre-filled with the last query (see
+    // -ytmng_syncQueryFromYouTube). Selecting it rather than parking the caret
+    // at the end means typing replaces the old query -- the useful default --
+    // while a tap still drops in to edit or re-run it.
+    if (searchBar.text.length > 0) [searchBar.searchTextField selectAll:nil];
 }
 
 // YouTube keeps this controller alive and re-presents it, so the field has to

@@ -159,6 +159,18 @@ static NSArray *appendCategory(NSArray *categories) {
                 }]];
 
     [rows addObject:[%c(YTSettingsSectionItem)
+        switchItemWithTitle:@"Hide YouTube's search bar"
+           titleDescription:@"Removes the \"Search YouTube\" pill and the "
+                            @"results-page search field, leaving the tab bar "
+                            @"search button as the only way in."
+    accessibilityIdentifier:nil
+                   switchOn:YTMNGGetBool(YTMNGHideYouTubeSearchKey)
+                switchBlock:^BOOL(id cell, BOOL enabled) {
+                    YTMNGSetBool(YTMNGHideYouTubeSearchKey, enabled);
+                    return YES;
+                }]];
+
+    [rows addObject:[%c(YTSettingsSectionItem)
         switchItemWithTitle:@"Native search screen"
            titleDescription:@"Native search bar with YouTube's autocomplete "
                             @"suggestions. Submitting hands off to YouTube's "

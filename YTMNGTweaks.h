@@ -55,6 +55,9 @@ extern const NSUInteger YTMNGHideableTabsCount;
 // Detached glass search button beside the native tab bar (Zalo/Messages style).
 #define YTMNGTabBarSearchKey @"YTMNGTabBarSearch"
 
+// Hides YouTube's own search pill and results-page search field.
+#define YTMNGHideYouTubeSearchKey @"YTMNGHideYouTubeSearch"
+
 BOOL YTMNGNativeTabBarEnabled(void);
 BOOL YTMNGGetBool(NSString *key);
 void YTMNGSetBool(NSString *key, BOOL value);
