@@ -404,6 +404,13 @@ static CGRect itemRowRect(YTPivotBarView *bar) {
     glass.layer.cornerCurve = kCACornerCurveContinuous;
     glass.clipsToBounds = YES;
 
+    // The glass has to be re-sent to the back on every layout, not just when it
+    // is created. UIButton builds its imageView lazily on the first -setImage:,
+    // and inserts it at the bottom of its subview list -- underneath the glass
+    // we added at index 0. The magnifier was being drawn behind a frosted
+    // layer, which is why it looked washed out and half-there.
+    [button sendSubviewToBack:glass];
+
     [self bringSubviewToFront:button];
 }
 
