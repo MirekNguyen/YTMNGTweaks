@@ -300,11 +300,19 @@ static CGRect itemRowRect(YTPivotBarView *bar) {
 
     objc_setAssociatedObject(self, &kExpandingKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
+    // The tab items are part of the old state, so they go as the field arrives
+    // -- the same swap Photos makes.
+    UITabBar *tabBar = objc_getAssociatedObject(self, &kTabBarKey);
+
     // The glyph slides to the leading edge as it widens, landing where a search
-    // field's icon sits.
-    [UIView animateWithDuration:0.26
+    // field's icon sits. The search screen is opened at the same time rather
+    // than after, so the real field fades in over this one at the same size and
+    // position instead of arriving as a separate screen.
+    [self ytmng_openSearchScreen];
+
+    [UIView animateWithDuration:0.28
                           delay:0
-         usingSpringWithDamping:0.9
+         usingSpringWithDamping:0.85
           initialSpringVelocity:0
                         options:UIViewAnimationOptionCurveEaseOut
                      animations:^{
@@ -312,17 +320,17 @@ static CGRect itemRowRect(YTPivotBarView *bar) {
         glass.frame = button.bounds;
         button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
         button.contentEdgeInsets = UIEdgeInsetsMake(0, 18, 0, 0);
+        tabBar.alpha = 0.0;
     } completion:^(__unused BOOL finished) {
-        [self ytmng_openSearchScreen];
-
-        // Collapse once the search screen has covered us, so the button is
-        // already a circle again by the time it is next visible.
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)),
+        // Restore once the search screen is covering us, so the bar is back to
+        // its normal state by the time it is next visible.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
             button.frame = collapsed;
             glass.frame = button.bounds;
             button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentCenter;
             button.contentEdgeInsets = UIEdgeInsetsZero;
+            tabBar.alpha = 1.0;
             objc_setAssociatedObject(self, &kExpandingKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             [self setNeedsLayout];
         });

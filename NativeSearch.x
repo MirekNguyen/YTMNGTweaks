@@ -106,18 +106,39 @@ static NSString *suggestionText(id suggestion) {
     [host addSubview:table];
 
     UILayoutGuide *guide = host.safeAreaLayoutGuide;
-    // Pinning straight to the safe-area edges let the field run into (and past)
-    // the screen edges, because UISearchBar adds no margin of its own in
-    // minimal style and the glass capsule is drawn to the full width. Inset it
-    // so the capsule floats the way the system search bar does.
+
+    // Bottom-anchored, the way Photos does it.
+    //
+    // The field used to sit at the top, which broke the one thing the tab bar
+    // button was for: the button is at the bottom-right, so expanding it and
+    // then showing a field at the opposite end of the screen reads as the
+    // button vanishing and an unrelated screen appearing. Docking the field at
+    // the bottom makes the expansion continuous -- the circle grows into the
+    // field, in place -- and puts the input next to the thumb instead of a
+    // reach away.
+    //
+    // keyboardLayoutGuide (iOS 15+) tracks the keyboard for us, including the
+    // interactive dismiss drag. Below that, fall back to the safe area: the
+    // field simply does not rise with the keyboard, which is degraded but not
+    // broken. The @available guard is required -- this project deploys to 14.0.
+    NSLayoutConstraint *bottom;
+    if (@available(iOS 15.0, *)) {
+        bottom = [searchBar.bottomAnchor constraintEqualToAnchor:host.keyboardLayoutGuide.topAnchor
+                                                        constant:-YTMNGSearchBarInsetV];
+    } else {
+        bottom = [searchBar.bottomAnchor constraintEqualToAnchor:guide.bottomAnchor
+                                                        constant:-YTMNGSearchBarInsetV];
+    }
+
     [NSLayoutConstraint activateConstraints:@[
-        [searchBar.topAnchor constraintEqualToAnchor:guide.topAnchor constant:YTMNGSearchBarInsetV],
+        bottom,
         [searchBar.leadingAnchor constraintEqualToAnchor:guide.leadingAnchor constant:YTMNGSearchBarInsetH],
         [searchBar.trailingAnchor constraintEqualToAnchor:guide.trailingAnchor constant:-YTMNGSearchBarInsetH],
-        [table.topAnchor constraintEqualToAnchor:searchBar.bottomAnchor],
+        // Suggestions fill everything above the field.
+        [table.topAnchor constraintEqualToAnchor:guide.topAnchor],
         [table.leadingAnchor constraintEqualToAnchor:guide.leadingAnchor],
         [table.trailingAnchor constraintEqualToAnchor:guide.trailingAnchor],
-        [table.bottomAnchor constraintEqualToAnchor:guide.bottomAnchor],
+        [table.bottomAnchor constraintEqualToAnchor:searchBar.topAnchor],
     ]];
 
     objc_setAssociatedObject(self, &kSearchBarKey, searchBar, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
