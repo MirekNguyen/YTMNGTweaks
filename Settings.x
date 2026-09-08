@@ -9,8 +9,20 @@
 //
 // which is exactly the section layout the app renders. The older
 // +[YTAppSettingsPresentationData settingsCategoryOrder] still exists but no
-// longer drives the screen, so appending to it alone renders nothing. We append
-// to the Account group and keep the legacy hook as a fallback for other builds.
+// longer drives the screen, so appending to it alone renders nothing.
+//
+// Where the row goes
+// ------------------
+// Sitting in "Account" was wrong -- this is a tweak, not an account setting.
+// YouGroupSettings (built alongside us, since RYD depends on it) adds a
+// "Tweaks" group and populates it from a class method it grafts onto
+// YTSettingsGroupData: +tweaks, a mutable array of category IDs. Every tweak in
+// that list is rendered in the Tweaks group, and any of them that passes a nil
+// icon is given YouTube's gear glyph. So registering there is all it takes to
+// sit alongside RYD and the rest, with a matching icon.
+//
+// The Account fallback is kept for the case where YouGroupSettings is not
+// installed, because otherwise the settings row would vanish entirely.
 //
 // Rows themselves come from
 //   -[YTSettingsSectionItemManager updateSectionForCategory:withEntry:]
@@ -18,8 +30,14 @@
 
 #import "YTMNGTweaks.h"
 
-// Arbitrary ID well clear of YouTube's own category numbering.
-static const NSUInteger YTMNGSettingsCategory = 8064;
+// Four-character code, matching the convention YouGroupSettings uses for tweaks
+// that have no upstream-assigned number ('ytwk', 'ytic', ...). Well clear of
+// YouTube's own numeric category IDs.
+static const NSUInteger YTMNGSettingsCategory = 'ytmg';
+
+// Set when YouGroupSettings accepted our registration, so the Account-group
+// fallback can stand down and we do not appear twice.
+static BOOL YTMNGRegisteredInTweaksGroup = NO;
 
 @interface YTAppSettingsPresentationData : NSObject
 + (NSArray *)settingsCategoryOrder;
@@ -27,11 +45,31 @@ static const NSUInteger YTMNGSettingsCategory = 8064;
 
 @interface YTSettingsGroupData : NSObject
 - (NSArray *)accountCategories;
+// Grafted on by YouGroupSettings; absent when that tweak is not installed.
++ (NSMutableArray *)tweaks;
 @end
 
 @interface YTSettingsSectionItemManager : NSObject
 - (void)updateSectionForCategory:(NSUInteger)category withEntry:(id)entry;
 @end
+
+// Registers with YouGroupSettings' Tweaks group. Returns NO when that tweak is
+// not present, in which case the caller falls back to the Account group.
+static BOOL registerInTweaksGroup(void) {
+    if (YTMNGRegisteredInTweaksGroup) return YES;
+
+    Class groupData = NSClassFromString(@"YTSettingsGroupData");
+    if (![groupData respondsToSelector:@selector(tweaks)]) return NO;
+
+    NSMutableArray *tweaks = [groupData tweaks];
+    if (![tweaks isKindOfClass:[NSMutableArray class]]) return NO;
+
+    NSNumber *category = @(YTMNGSettingsCategory);
+    if (![tweaks containsObject:category]) [tweaks addObject:category];
+
+    YTMNGRegisteredInTweaksGroup = YES;
+    return YES;
+}
 
 static NSArray *appendCategory(NSArray *categories) {
     if (![categories isKindOfClass:[NSArray class]]) return categories;
@@ -50,6 +88,7 @@ static NSArray *appendCategory(NSArray *categories) {
     // %orig must be bound to a local first: logos mis-parses it when nested
     // directly inside another call's argument list.
     NSArray *categories = %orig;
+    if (registerInTweaksGroup()) return categories;
     return appendCategory(categories);
 }
 
@@ -59,6 +98,7 @@ static NSArray *appendCategory(NSArray *categories) {
 
 + (NSArray *)settingsCategoryOrder {
     NSArray *categories = %orig;
+    if (registerInTweaksGroup()) return categories;
     return appendCategory(categories);
 }
 
@@ -193,11 +233,14 @@ static NSArray *appendCategory(NSArray *categories) {
         if (row) [rows addObject:row];
     }
 
+    // icon stays nil on purpose: YouGroupSettings fills in YouTube's gear glyph
+    // for every category in its Tweaks list, which is how the other tweaks get
+    // theirs. Passing our own would look inconsistent beside them.
     [delegate setSectionItems:rows
                   forCategory:YTMNGSettingsCategory
                         title:@"YTMNGTweaks"
                          icon:nil
-             titleDescription:@"Hide channel page tabs."
+             titleDescription:@"Native tab bar, search, Liquid Glass and channel tab hiding."
                  headerHidden:NO];
 }
 
