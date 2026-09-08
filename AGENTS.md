@@ -24,6 +24,7 @@ Broader workspace context: see the workspace-level `AGENTS.md` one directory up.
 | `NativeBar.x` | Runtime-resolved `UIGlassEffect` on `YTPivotBarView.blurView`, reshaped as an iOS 26 floating capsule. |
 | `NativeTabBar.x` | Real `UITabBar` + SF Symbols replacing the pivot bar; taps forwarded to `-[YTPivotBarViewController didTapItemWithRenderer:]` via the `_renderer` ivar. Selection is restored from `YTPivotBarItemView -selected` at build time and re-synced from `YTPivotBarViewController -selectedPivotIdentifier` on layout, because `-selectItemWithPivotIdentifier:` fires before the tab bar exists. Also owns the optional detached glass search button, which calls `YTHeaderViewController -didPressSearchButton:`. |
 | `SearchGlass.x` | Glass view behind `YTSearchBoxView` (associated object `kGlassViewKey`). **`YTSearchBarView` is deliberately not hooked** — it is a `UITextField` subclass and inserting a subview into it drew the capsule across the whole topbar. |
+| `HideSearchBar.x` | Hides `YTSearchBoxView` (the "Search YouTube" pill, topbar + Home zero state) and `YTSearchBarView` (results-page field). Key `YTMNGHideYouTubeSearch`. Entry point becomes the tab bar button only. |
 | `NativeSearch.x` | Native UIKit search bar driving YouTube's own suggestions (`setSearchText:forceRefreshSuggestions:`, `-setSuggestions:`, `performSearch:selectedIndexPath:searchMethod:`). Results are Elements payloads, rendered by YouTube. |
 | `HeaderGlass.x` | Glass capsule grouping header icon buttons (≤64pt per side), pad H10/V6. Skips buttons with no drawn content and clamps to the **safe area**, not `bounds` — otherwise it drew empty grey blobs and a stray circle over the status bar. |
 | `ChannelHeader.x` | Hides `subscribeSwitch` / `sponsorButton` in `YTC4TabbedHeaderView -layoutSubviews`. |
@@ -31,7 +32,8 @@ Broader workspace context: see the workspace-level `AGENTS.md` one directory up.
 ## Defaults keys
 
 `YTMNGLiquidGlass`, `YTMNGNativeBar`, `YTMNGNativeTabBar`, `YTMNGGlassSearch`,
-`YTMNGNativeSearch`, `YTMNGGlassHeader`, `YTMNGHideSubscribe`, `YTMNGTabBarSearch`, and the tab keys
+`YTMNGNativeSearch`, `YTMNGGlassHeader`, `YTMNGHideSubscribe`, `YTMNGTabBarSearch`,
+`YTMNGHideYouTubeSearch`, and the tab keys
 `YTMNGHideHome/Live/Shorts/Playlists/Posts/Store/Releases/Podcasts/Channels`.
 
 **`YTMNGHideLive` is the only key that defaults to ON.** Everything else is opt-in.
@@ -59,3 +61,7 @@ Append one line per session. Newest last.
   longer wraps invisible buttons or escapes into the status bar; tab bar
   re-clears YouTube's chrome in `-styleBackgroundColors`; search glyph contrast;
   settings moved into the YouGroupSettings Tweaks group as `'ytmg'`.
+- **2026-09-08** — v2.9.0. Hides YouTube's own search pill and results-page field
+  (`HideSearchBar.x`); tab bar search button expands into a capsule before the
+  search screen and pre-fills + selects the last query; capped the button
+  diameter so it stops getting clipped by the pivot bar bounds.
