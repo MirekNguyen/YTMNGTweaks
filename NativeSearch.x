@@ -90,8 +90,7 @@ static NSString *suggestionText(id suggestion) {
     // field's is the redundant one: the cancel button leaves the screen, which
     // is what the user actually wants, and on iOS 26 it is the one wearing the
     // glass capsule. Suppress the inner one.
-    if (@available(iOS 13.0, *))
-        searchBar.searchTextField.clearButtonMode = UITextFieldViewModeNever;
+    searchBar.searchTextField.clearButtonMode = UITextFieldViewModeNever;
 
     UITableView *table = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain];
     table.dataSource = (id)self;
