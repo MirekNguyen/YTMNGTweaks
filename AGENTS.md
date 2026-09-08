@@ -19,13 +19,13 @@ Broader workspace context: see the workspace-level `AGENTS.md` one directory up.
 |---|---|
 | `YTMNGTweaks.h` | Prefs domain, `YTMNGTabSpec`, all `YTMNG*` defaults keys, YouTube class re-declarations. |
 | `Tweak.x` | Hide channel-page tabs. Base64-decodes `browseEndpoint.params` and reads protobuf field 2 (tag `0x12`) to identify a tab. Hooks `YTTabsViewController` (`loadWithModel:`, `updateWithModel:…`, `reloadTabTitlesWithTabsArray:`, `rebuildIndexMapsWithTabsArray:`) and `YTBrowseResponseViewController -handleInitialOrContinuationBrowseResponse:`. Guards against removing every tab and re-promotes a selection when Home is dropped. |
-| `Settings.x` | Adds the "YTMNGTweaks" settings section (category ID `8064`) via `YTSettingsGroupData -accountCategories`, with a legacy `+settingsCategoryOrder` fallback, and builds rows in `YTSettingsSectionItemManager -updateSectionForCategory:withEntry:`. |
+| `Settings.x` | Registers category `'ytmg'` into YouGroupSettings' **Tweaks** group (`+[YTSettingsGroupData tweaks]`), which also supplies the gear icon — so the icon is passed as `nil` on purpose. Falls back to the Account group when YouGroupSettings is absent. Rows built in `-updateSectionForCategory:withEntry:`. |
 | `LiquidGlass.x` | Forces `YTColdConfig -mainAppCoreClientIos27EnableLiquidGlass` / `-enableLiquidGlassEffect` to YES. Only effective if `UIDesignRequiresCompatibility` is `false` in the app Info.plist — the YTPlusM workflow patches that. |
 | `NativeBar.x` | Runtime-resolved `UIGlassEffect` on `YTPivotBarView.blurView`, reshaped as an iOS 26 floating capsule. |
 | `NativeTabBar.x` | Real `UITabBar` + SF Symbols replacing the pivot bar; taps forwarded to `-[YTPivotBarViewController didTapItemWithRenderer:]` via the `_renderer` ivar. Selection is restored from `YTPivotBarItemView -selected` at build time and re-synced from `YTPivotBarViewController -selectedPivotIdentifier` on layout, because `-selectItemWithPivotIdentifier:` fires before the tab bar exists. Also owns the optional detached glass search button, which calls `YTHeaderViewController -didPressSearchButton:`. |
 | `SearchGlass.x` | Glass view behind `YTSearchBoxView` (associated object `kGlassViewKey`). **`YTSearchBarView` is deliberately not hooked** — it is a `UITextField` subclass and inserting a subview into it drew the capsule across the whole topbar. |
 | `NativeSearch.x` | Native UIKit search bar driving YouTube's own suggestions (`setSearchText:forceRefreshSuggestions:`, `-setSuggestions:`, `performSearch:selectedIndexPath:searchMethod:`). Results are Elements payloads, rendered by YouTube. |
-| `HeaderGlass.x` | Glass capsule grouping header icon buttons (≤64pt per side), pad H10/V6. |
+| `HeaderGlass.x` | Glass capsule grouping header icon buttons (≤64pt per side), pad H10/V6. Skips buttons with no drawn content and clamps to the **safe area**, not `bounds` — otherwise it drew empty grey blobs and a stray circle over the status bar. |
 | `ChannelHeader.x` | Hides `subscribeSwitch` / `sponsorButton` in `YTC4TabbedHeaderView -layoutSubviews`. |
 
 ## Defaults keys
@@ -40,10 +40,11 @@ Broader workspace context: see the workspace-level `AGENTS.md` one directory up.
 
 1. New `.x` file → add it to `YTMNGTweaks_FILES` in `Makefile`, or it silently won't build in.
 2. Every feature must be behind a defaults key declared in `YTMNGTweaks.h` and exposed in `Settings.x`.
-3. Bump `Version:` in `control` for anything user-visible.
+3. Bump `Version:` in `control` (semver) for anything user-visible — CI reads it for the release tag.
 4. Keep the code warning-clean — unused hook parameters have broken CI before (`0291921`).
 5. `main` is the release branch: CI clones `--depth=1` from `main`, so pushing ships.
 6. Don't add a CI workflow here; building is YTPlusM's job.
+7. Conventional commits (`feat:`, `fix(scope):`, `chore:`); body explains why.
 
 ## Changelog
 
@@ -54,3 +55,7 @@ Append one line per session. Newest last.
   systemBlue tab tint, stale search text on re-entry, duplicate clear button,
   search bar running off the screen edges, oversized header capsule. Added the
   detached tab bar search button (`YTMNGTabBarSearch`).
+- **2026-09-08** — v2.8.0. Search keeps its query on re-entry; header glass no
+  longer wraps invisible buttons or escapes into the status bar; tab bar
+  re-clears YouTube's chrome in `-styleBackgroundColors`; search glyph contrast;
+  settings moved into the YouGroupSettings Tweaks group as `'ytmg'`.
