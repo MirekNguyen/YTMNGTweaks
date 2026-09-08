@@ -36,13 +36,20 @@
 @interface YTSearchViewController : UIViewController
 - (void)performSearch:(NSString *)query selectedIndexPath:(id)indexPath searchMethod:(int)method;
 - (void)setSearchText:(NSString *)text forceRefreshSuggestions:(BOOL)refresh;
+- (void)dismissSearch;
 - (void)ytmng_installNativeSearch;
 - (void)ytmng_submitQuery:(NSString *)query;
+- (void)ytmng_resetSearch;
 @end
 
 static char kSuggestionsKey;
 static char kTableKey;
 static char kSearchBarKey;
+
+// Breathing room around the search field so the glass capsule floats instead of
+// bleeding off the screen edges.
+static const CGFloat YTMNGSearchBarInsetH = 8.0;
+static const CGFloat YTMNGSearchBarInsetV = 4.0;
 
 static BOOL nativeSearchEnabled(void) {
     return YTMNGGetBool(YTMNGNativeSearchKey);
@@ -78,6 +85,14 @@ static NSString *suggestionText(id suggestion) {
     searchBar.enablesReturnKeyAutomatically = NO;
     searchBar.autocorrectionType = UITextAutocorrectionTypeNo;
 
+    // UISearchBar draws its own round "clear text" button inside the field, and
+    // we already show a cancel button beside it -- two X's for one job. The
+    // field's is the redundant one: the cancel button leaves the screen, which
+    // is what the user actually wants, and on iOS 26 it is the one wearing the
+    // glass capsule. Suppress the inner one.
+    if (@available(iOS 13.0, *))
+        searchBar.searchTextField.clearButtonMode = UITextFieldViewModeNever;
+
     UITableView *table = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain];
     table.dataSource = (id)self;
     table.delegate = (id)self;
@@ -89,10 +104,14 @@ static NSString *suggestionText(id suggestion) {
     [host addSubview:table];
 
     UILayoutGuide *guide = host.safeAreaLayoutGuide;
+    // Pinning straight to the safe-area edges let the field run into (and past)
+    // the screen edges, because UISearchBar adds no margin of its own in
+    // minimal style and the glass capsule is drawn to the full width. Inset it
+    // so the capsule floats the way the system search bar does.
     [NSLayoutConstraint activateConstraints:@[
-        [searchBar.topAnchor constraintEqualToAnchor:guide.topAnchor],
-        [searchBar.leadingAnchor constraintEqualToAnchor:guide.leadingAnchor],
-        [searchBar.trailingAnchor constraintEqualToAnchor:guide.trailingAnchor],
+        [searchBar.topAnchor constraintEqualToAnchor:guide.topAnchor constant:YTMNGSearchBarInsetV],
+        [searchBar.leadingAnchor constraintEqualToAnchor:guide.leadingAnchor constant:YTMNGSearchBarInsetH],
+        [searchBar.trailingAnchor constraintEqualToAnchor:guide.trailingAnchor constant:-YTMNGSearchBarInsetH],
         [table.topAnchor constraintEqualToAnchor:searchBar.bottomAnchor],
         [table.leadingAnchor constraintEqualToAnchor:guide.leadingAnchor],
         [table.trailingAnchor constraintEqualToAnchor:guide.trailingAnchor],
@@ -102,6 +121,21 @@ static NSString *suggestionText(id suggestion) {
     objc_setAssociatedObject(self, &kSearchBarKey, searchBar, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(self, &kTableKey, table, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(self, &kSuggestionsKey, [NSArray array], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+%new
+- (void)ytmng_resetSearch {
+    UISearchBar *searchBar = objc_getAssociatedObject(self, &kSearchBarKey);
+    UITableView *table = objc_getAssociatedObject(self, &kTableKey);
+
+    searchBar.text = @"";
+    objc_setAssociatedObject(self, &kSuggestionsKey, [NSArray array], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [table reloadData];
+
+    // Clear YouTube's copy too, otherwise it keeps serving suggestions for the
+    // old query and the next -setSuggestions: repopulates our list with it.
+    if ([self respondsToSelector:@selector(setSearchText:forceRefreshSuggestions:)])
+        [self setSearchText:@"" forceRefreshSuggestions:NO];
 }
 
 %new
@@ -128,6 +162,15 @@ static NSString *suggestionText(id suggestion) {
 %new
 - (void)searchBarCancelButtonClicked:(UISearchBar *)searchBar {
     [searchBar resignFirstResponder];
+    [self ytmng_resetSearch];
+
+    // YouTube owns how this screen was presented (pushed, or grafted onto the
+    // root VC), so let it tear itself down where it can; the navigation
+    // fallbacks only run if that method is missing.
+    if ([self respondsToSelector:@selector(dismissSearch)]) {
+        [self dismissSearch];
+        return;
+    }
     if (self.navigationController.viewControllers.count > 1)
         [self.navigationController popViewControllerAnimated:YES];
     else if (self.presentingViewController)
@@ -202,6 +245,24 @@ static NSString *suggestionText(id suggestion) {
     if (!nativeSearchEnabled()) return;
     [self ytmng_installNativeSearch];
     [(UISearchBar *)objc_getAssociatedObject(self, &kSearchBarKey) becomeFirstResponder];
+}
+
+// YouTube keeps this controller alive and re-presents it, so without an
+// explicit reset the field came back holding the previous query and a stale
+// suggestion list -- typing looked like it had leaked in from another screen.
+// Clearing on the way out (rather than on the way in) means the field is
+// already empty for the presentation animation instead of blanking mid-flight.
+- (void)viewWillAppear:(BOOL)animated {
+    %orig;
+    if (!nativeSearchEnabled()) return;
+    [self ytmng_installNativeSearch];
+    [self ytmng_resetSearch];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    %orig;
+    if (!nativeSearchEnabled()) return;
+    [self ytmng_resetSearch];
 }
 
 - (void)viewDidLayoutSubviews {

@@ -107,6 +107,18 @@ static NSArray *appendCategory(NSArray *categories) {
                 }]];
 
     [rows addObject:[%c(YTSettingsSectionItem)
+        switchItemWithTitle:@"Search button beside the tab bar"
+           titleDescription:@"Adds a detached glass search button next to the "
+                            @"native tab bar, the way Messages and Zalo do it. "
+                            @"Requires the native tab bar."
+    accessibilityIdentifier:nil
+                   switchOn:YTMNGGetBool(YTMNGTabBarSearchKey)
+                switchBlock:^BOOL(id cell, BOOL enabled) {
+                    YTMNGSetBool(YTMNGTabBarSearchKey, enabled);
+                    return YES;
+                }]];
+
+    [rows addObject:[%c(YTSettingsSectionItem)
         switchItemWithTitle:@"Native search screen"
            titleDescription:@"Native search bar with YouTube's autocomplete "
                             @"suggestions. Submitting hands off to YouTube's "

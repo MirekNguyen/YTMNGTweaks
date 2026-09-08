@@ -25,6 +25,17 @@ static const CGFloat YTMNGHeaderPadV = 6.0;
 // to a giant blob covering the status bar. Only icon-sized controls qualify.
 static const CGFloat YTMNGMaxButtonSide = 64.0;
 
+// A row of header icons is one icon tall. Anything materially taller than a
+// single icon means the union swept up something that is not an action button
+// (a stretched hit target, a button whose bounds differ from its rendered
+// frame after transform), and the capsule turns into the oversized slab that
+// covered the banner. Cap it rather than trusting the union blindly.
+static const CGFloat YTMNGMaxCapsuleHeight = 56.0;
+
+// Two icons plus padding is a normal group; far beyond that and the "group" is
+// really the whole header, so drawing glass behind it is wrong.
+static const CGFloat YTMNGMaxCapsuleWidthRatio = 0.55;
+
 static UIVisualEffect *headerGlassEffect(void) {
     Class glassClass = NSClassFromString(@"UIGlassEffect");
     if (!glassClass) return nil;
@@ -62,6 +73,12 @@ static void applyGroupGlass(UIView *header, NSArray *buttons, const void *key) {
     CGRect group = CGRectNull;
     for (UIView *button in buttons) {
         CGRect frame = [header convertRect:button.bounds fromView:button];
+        // A button's bounds can be icon-sized while its frame in header
+        // coordinates is not (scroll offsets, transforms, oversized hit
+        // targets). Re-check after conversion, since that rect is what the
+        // capsule is actually built from.
+        if (CGRectGetHeight(frame) > YTMNGMaxButtonSide ||
+            CGRectGetWidth(frame) > YTMNGMaxButtonSide) continue;
         group = CGRectIsNull(group) ? frame : CGRectUnion(group, frame);
     }
     if (CGRectIsNull(group) || group.size.height <= 0) return;
@@ -72,6 +89,15 @@ static void applyGroupGlass(UIView *header, NSArray *buttons, const void *key) {
     // bar and off the screen edge.
     group = CGRectIntersection(group, header.bounds);
     if (CGRectIsNull(group) || CGRectIsEmpty(group)) return;
+
+    // Final sanity check. If the group is still header-sized, the buttons we
+    // matched were not a toolbar row and glass behind them would read as a
+    // random slab, so draw nothing at all rather than something wrong.
+    if (CGRectGetHeight(group) > YTMNGMaxCapsuleHeight ||
+        CGRectGetWidth(group) > CGRectGetWidth(header.bounds) * YTMNGMaxCapsuleWidthRatio) {
+        glass.hidden = YES;
+        return;
+    }
 
     if (!glass) {
         UIVisualEffect *effect = headerGlassEffect();

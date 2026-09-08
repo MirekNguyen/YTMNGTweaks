@@ -52,6 +52,9 @@ extern const NSUInteger YTMNGHideableTabsCount;
 // GitHub-style glass capsule behind the header action buttons.
 #define YTMNGGlassHeaderKey @"YTMNGGlassHeader"
 
+// Detached glass search button beside the native tab bar (Zalo/Messages style).
+#define YTMNGTabBarSearchKey @"YTMNGTabBarSearch"
+
 BOOL YTMNGNativeTabBarEnabled(void);
 BOOL YTMNGGetBool(NSString *key);
 void YTMNGSetBool(NSString *key, BOOL value);

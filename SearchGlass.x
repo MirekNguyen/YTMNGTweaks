@@ -70,11 +70,14 @@ static void applySearchGlass(id container) {
 
 %end
 
-%hook YTSearchBarView
+// YTSearchBarView is deliberately NOT hooked.
+//
+// It looks like a sibling of YTSearchBoxView but it is a UITextField subclass
+// (-textRectForBounds:, -leftViewRectForBounds:, -placeholderRectForBounds:).
+// Inserting a raw subview at index 0 of a text field fights its own subview
+// management: the field re-lays-out its content on every keystroke and does not
+// clip to the pill, so on the results screen the capsule was drawn across the
+// full topbar width and ended up sitting under the back button with the clear
+// button hanging off the trailing edge. There is no correct frame to give it
+// from outside, so the fix is to leave the text field alone.
 
-- (void)layoutSubviews {
-    %orig;
-    applySearchGlass(self);
-}
-
-%end
