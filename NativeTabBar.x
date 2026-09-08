@@ -1,5 +1,5 @@
-// Replaces YouTube's bottom bar with a real UIKit UITabBar, plus an optional
-// detached glass search button beside it.
+// Replaces YouTube's bottom bar with a real UIKit UITabBar, with search as one
+// of its items.
 //
 // This is a genuine UITabBar, not a restyle: native glass, native SF Symbol
 // icons, native selection animation and native tap handling. What it is NOT is
@@ -51,24 +51,19 @@
 - (void)ytmng_rebuildNativeTabBar;
 - (void)ytmng_selectIdentifier:(NSString *)identifier;
 - (void)ytmng_syncSelectionFromYouTube;
-- (void)ytmng_layoutSearchButton;
 - (void)ytmng_searchTapped;
 - (void)ytmng_hideYouTubeChrome;
 - (void)ytmng_openSearchScreen;
-- (CGFloat)ytmng_searchSideForItems:(CGRect)items;
 @end
 
 static char kTabBarKey;
 static char kIdentifiersKey;
 static char kRenderersKey;
 static char kPendingSelectionKey;
-static char kSearchButtonKey;
 static char kExpandingKey;
 
-// Gap between the tab bar capsule and the detached search button.
-static const CGFloat YTMNGSearchGap = 8.0;
-// Matches NativeBar.x so both bars sit on the same horizontal rails.
-static const CGFloat YTMNGSearchEdgeInset = 12.0;
+// Marks the search item so a tap on it can be told apart from a real tab.
+static NSString *const YTMNGSearchIdentifier = @"YTMNGSearch";
 
 BOOL YTMNGNativeTabBarEnabled(void) {
     return YTMNGGetBool(YTMNGNativeTabBarKey);
@@ -76,17 +71,6 @@ BOOL YTMNGNativeTabBarEnabled(void) {
 
 static BOOL tabBarSearchEnabled(void) {
     return YTMNGNativeTabBarEnabled() && YTMNGGetBool(YTMNGTabBarSearchKey);
-}
-
-static UIVisualEffect *tabBarGlassEffect(void) {
-    Class glassClass = NSClassFromString(@"UIGlassEffect");
-    if (!glassClass) return nil;
-
-    SEL selector = NSSelectorFromString(@"effectWithStyle:");
-    if (![glassClass respondsToSelector:selector]) return nil;
-
-    UIVisualEffect *(*send)(Class, SEL, NSInteger) = (void *)objc_msgSend;
-    return send(glassClass, selector, 0);
 }
 
 // YouTube's pivot identifiers are stable server-side constants, so mapping them
@@ -133,19 +117,6 @@ static UIViewController *findSearchHost(UIViewController *root) {
         if (found) return found;
     }
     return findSearchHost(root.presentedViewController);
-}
-
-// Union of the (hidden) pivot item views. Used purely for geometry: it tells us
-// where the icon row really is, which is what both the capsule and the search
-// button must line up with. contentView spans the safe area and is useless here.
-static CGRect itemRowRect(YTPivotBarView *bar) {
-    CGRect items = CGRectNull;
-    for (UIView *item in bar.itemViews) {
-        if (![item isKindOfClass:[UIView class]] || item.hidden) continue;
-        CGRect frame = [bar convertRect:item.bounds fromView:item];
-        items = CGRectIsNull(items) ? frame : CGRectUnion(items, frame);
-    }
-    return items;
 }
 
 %hook YTPivotBarView
@@ -197,6 +168,29 @@ static CGRect itemRowRect(YTPivotBarView *bar) {
     }
 
     if (items.count == 0) return;
+
+    // Search is a tab, not a separate button.
+    //
+    // It used to be a detached circle beside the bar, the way Photos does it.
+    // Apple Music keeps search inside the same capsule as the tabs, which is
+    // the better fit here: one pill instead of two shapes competing at the
+    // bottom of the screen, no width juggling between them, and the whole bar
+    // is already the size and position of the search field it turns into -- so
+    // the morph is the bar itself rather than one small piece of it.
+    //
+    // It is not a real tab: selecting it is intercepted below and the previous
+    // tab stays selected, so it behaves as an action that happens to live in
+    // the tab strip.
+    if (tabBarSearchEnabled()) {
+        UITabBarItem *search = [[UITabBarItem alloc]
+            initWithTitle:@"Search"
+                    image:[UIImage systemImageNamed:@"magnifyingglass"]
+            selectedImage:[UIImage systemImageNamed:@"magnifyingglass"]];
+        search.tag = (NSInteger)identifiers.count;
+        [identifiers addObject:YTMNGSearchIdentifier];
+        [renderers addObject:[NSNull null]];
+        [items addObject:search];
+    }
 
     // Rebuilding on every layout pass would cancel the selection animation, so
     // only rebuild when the set of tabs actually changed.
@@ -272,154 +266,41 @@ static CGRect itemRowRect(YTPivotBarView *bar) {
         ((void (*)(id, SEL, id))objc_msgSend)(host, press, nil);
 }
 
-// Grows the circle into a full-width capsule before the search screen arrives,
-// so the button reads as turning into the search field rather than as a button
-// that happens to push a screen.
+// Fades the tab strip out as the search field arrives.
 //
-// The capsule radius is height/2 and the height does not change, so the shape
-// stays correct throughout without animating cornerRadius separately -- the
-// circle simply widens.
+// The bar is already the size and position of the field it becomes, so the
+// morph is a crossfade in place rather than a shape animation: the tabs go and
+// the field fades in over the same capsule. That is what makes it read as the
+// bar turning into the field, rather than a screen arriving from elsewhere.
 %new
 - (void)ytmng_searchTapped {
-    UIButton *button = objc_getAssociatedObject(self, &kSearchButtonKey);
-    if (!button) {
-        [self ytmng_openSearchScreen];
-        return;
-    }
-
-    UIView *glass = [button viewWithTag:0x59544D47];
-    CGRect collapsed = button.frame;
-    CGRect expanded = CGRectMake(YTMNGSearchEdgeInset,
-                                 CGRectGetMinY(collapsed),
-                                 CGRectGetWidth(self.bounds) - (YTMNGSearchEdgeInset * 2),
-                                 CGRectGetHeight(collapsed));
-    if (CGRectGetWidth(expanded) <= CGRectGetWidth(collapsed)) {
+    UITabBar *tabBar = objc_getAssociatedObject(self, &kTabBarKey);
+    if (!tabBar) {
         [self ytmng_openSearchScreen];
         return;
     }
 
     objc_setAssociatedObject(self, &kExpandingKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
-    // The tab items are part of the old state, so they go as the field arrives
-    // -- the same swap Photos makes.
-    UITabBar *tabBar = objc_getAssociatedObject(self, &kTabBarKey);
-
-    // The glyph slides to the leading edge as it widens, landing where a search
-    // field's icon sits. The search screen is opened at the same time rather
-    // than after, so the real field fades in over this one at the same size and
-    // position instead of arriving as a separate screen.
+    // Opened as the animation starts, not after it, so the real field fades in
+    // over the bar at the same size and position.
     [self ytmng_openSearchScreen];
 
-    [UIView animateWithDuration:0.28
+    [UIView animateWithDuration:0.22
                           delay:0
-         usingSpringWithDamping:0.85
-          initialSpringVelocity:0
                         options:UIViewAnimationOptionCurveEaseOut
                      animations:^{
-        button.frame = expanded;
-        glass.frame = button.bounds;
-        button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
-        button.contentEdgeInsets = UIEdgeInsetsMake(0, 18, 0, 0);
         tabBar.alpha = 0.0;
     } completion:^(__unused BOOL finished) {
-        // Restore once the search screen is covering us, so the bar is back to
-        // its normal state by the time it is next visible.
+        // Restore once the search screen covers us, so the bar is back to
+        // normal by the time it is next visible.
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
-            button.frame = collapsed;
-            glass.frame = button.bounds;
-            button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentCenter;
-            button.contentEdgeInsets = UIEdgeInsetsZero;
             tabBar.alpha = 1.0;
             objc_setAssociatedObject(self, &kExpandingKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             [self setNeedsLayout];
         });
     }];
-}
-
-// Padding around the icon row, capped so the circle cannot grow taller than
-// the bar that contains it. Without the cap the button was sized purely from
-// the item row, overflowed the pivot bar's bounds and got clipped -- the flat
-// bottom edge on the magnifier.
-%new
-- (CGFloat)ytmng_searchSideForItems:(CGRect)items {
-    CGFloat side = CGRectGetHeight(items) + 16.0;
-    CGFloat available = CGRectGetHeight(self.bounds) - 2.0;
-    if (available > 0 && side > available) side = available;
-    return side;
-}
-
-%new
-- (void)ytmng_layoutSearchButton {
-    UIButton *button = objc_getAssociatedObject(self, &kSearchButtonKey);
-
-    if (!tabBarSearchEnabled()) {
-        button.hidden = YES;
-        return;
-    }
-
-    // Mid-expansion the button owns its own frame; re-laying it out here would
-    // fight the animation.
-    if ([objc_getAssociatedObject(self, &kExpandingKey) boolValue]) return;
-
-    CGRect items = itemRowRect(self);
-    if (CGRectIsNull(items) || items.size.height <= 0) return;
-
-    if (!button) {
-        UIVisualEffect *effect = tabBarGlassEffect();
-        if (!effect) return;  // pre-iOS 26: no glass to match the bar with
-
-        // UIButtonTypeSystem tints the glyph with the inherited tintColor,
-        // which here resolves against the glass and washes out to a barely
-        // visible grey. A .custom button with an explicitly white template
-        // image keeps the same contrast as the tab bar icons beside it.
-        button = [UIButton buttonWithType:UIButtonTypeCustom];
-        button.tintColor = [UIColor labelColor];
-        UIImageSymbolConfiguration *config =
-            [UIImageSymbolConfiguration configurationWithPointSize:18.0
-                                                           weight:UIImageSymbolWeightSemibold];
-        UIImage *glyph = [[UIImage systemImageNamed:@"magnifyingglass" withConfiguration:config]
-            imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
-        [button setImage:glyph forState:UIControlStateNormal];
-        [button addTarget:self
-                   action:NSSelectorFromString(@"ytmng_searchTapped")
-         forControlEvents:UIControlEventTouchUpInside];
-
-        // The glass sits inside the button rather than behind it so the two can
-        // never drift apart during layout.
-        UIVisualEffectView *glass = [[UIVisualEffectView alloc] initWithEffect:effect];
-        glass.userInteractionEnabled = NO;
-        glass.tag = 0x59544D47;  // 'YTMG', so we can find it again below
-        [button insertSubview:glass atIndex:0];
-
-        [self addSubview:button];
-        objc_setAssociatedObject(self, &kSearchButtonKey, button, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }
-
-    button.hidden = NO;
-
-    // A circle the same height as the tab bar capsule, pinned to the trailing
-    // edge -- the layout Messages/Zalo use for a detached action button.
-    CGFloat side = [self ytmng_searchSideForItems:items];
-    CGRect frame = CGRectMake(CGRectGetWidth(self.bounds) - YTMNGSearchEdgeInset - side,
-                              CGRectGetMidY(items) - (side / 2.0),
-                              side, side);
-    if (!CGRectEqualToRect(button.frame, frame)) button.frame = frame;
-
-    UIView *glass = [button viewWithTag:0x59544D47];
-    glass.frame = button.bounds;
-    glass.layer.cornerRadius = side / 2.0;
-    glass.layer.cornerCurve = kCACornerCurveContinuous;
-    glass.clipsToBounds = YES;
-
-    // The glass has to be re-sent to the back on every layout, not just when it
-    // is created. UIButton builds its imageView lazily on the first -setImage:,
-    // and inserts it at the bottom of its subview list -- underneath the glass
-    // we added at index 0. The magnifier was being drawn behind a frosted
-    // layer, which is why it looked washed out and half-there.
-    [button sendSubviewToBack:glass];
-
-    [self bringSubviewToFront:button];
 }
 
 // Strips YouTube's own bar chrome so only the UITabBar's glass shows.
@@ -447,6 +328,16 @@ static CGRect itemRowRect(YTPivotBarView *bar) {
     NSArray *identifiers = objc_getAssociatedObject(self, &kIdentifiersKey);
     if (item.tag < 0 || (NSUInteger)item.tag >= renderers.count) return;
 
+    // The search item is an action, not a destination. Put the selection back
+    // where it was before opening search, so returning from the search screen
+    // does not leave the bar highlighting a tab that was never navigated to.
+    if ([identifiers[item.tag] isEqualToString:YTMNGSearchIdentifier]) {
+        NSString *previous = objc_getAssociatedObject(self, &kPendingSelectionKey);
+        [self ytmng_selectIdentifier:previous];
+        [self ytmng_searchTapped];
+        return;
+    }
+
     if ((NSUInteger)item.tag < identifiers.count)
         objc_setAssociatedObject(self, &kPendingSelectionKey, identifiers[item.tag], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
@@ -460,16 +351,13 @@ static CGRect itemRowRect(YTPivotBarView *bar) {
     %orig;
 
     UITabBar *tabBar = objc_getAssociatedObject(self, &kTabBarKey);
-    UIButton *search = objc_getAssociatedObject(self, &kSearchButtonKey);
 
     if (!YTMNGNativeTabBarEnabled()) {
         // Toggled off: put YouTube's own bar back.
         if (tabBar) {
             [tabBar removeFromSuperview];
-            [search removeFromSuperview];
             objc_setAssociatedObject(self, &kTabBarKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             objc_setAssociatedObject(self, &kIdentifiersKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            objc_setAssociatedObject(self, &kSearchButtonKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             self.contentView.hidden = NO;
             self.blurView.hidden = NO;
         }
@@ -484,17 +372,12 @@ static CGRect itemRowRect(YTPivotBarView *bar) {
     // Google's icons and its own material would otherwise show through.
     [self ytmng_hideYouTubeChrome];
 
-    // The search button eats the trailing edge, so the tab bar has to give it
-    // back rather than sit underneath.
-    CGRect frame = self.bounds;
-    if (tabBarSearchEnabled()) {
-        CGRect items = itemRowRect(self);
-        if (!CGRectIsNull(items) && items.size.height > 0)
-            frame.size.width -= [self ytmng_searchSideForItems:items] + YTMNGSearchGap;
-    }
-    if (!CGRectEqualToRect(tabBar.frame, frame)) tabBar.frame = frame;
+    // Search lives inside the bar now, so the bar spans the full width.
+    // Skipped mid-morph, when the animation owns the bar.
+    if (![objc_getAssociatedObject(self, &kExpandingKey) boolValue] &&
+        !CGRectEqualToRect(tabBar.frame, self.bounds))
+        tabBar.frame = self.bounds;
 
-    [self ytmng_layoutSearchButton];
     [self bringSubviewToFront:tabBar];
     [self ytmng_syncSelectionFromYouTube];
 }

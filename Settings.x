@@ -147,10 +147,10 @@ static NSArray *appendCategory(NSArray *categories) {
                 }]];
 
     [rows addObject:[%c(YTSettingsSectionItem)
-        switchItemWithTitle:@"Search button beside the tab bar"
-           titleDescription:@"Adds a detached glass search button next to the "
-                            @"native tab bar, the way Messages and Zalo do it. "
-                            @"Requires the native tab bar."
+        switchItemWithTitle:@"Search in the tab bar"
+           titleDescription:@"Adds Search as a tab bar item, the way Apple "
+                            @"Music does it. Tapping it turns the bar into the "
+                            @"search field. Requires the native tab bar."
     accessibilityIdentifier:nil
                    switchOn:YTMNGGetBool(YTMNGTabBarSearchKey)
                 switchBlock:^BOOL(id cell, BOOL enabled) {
