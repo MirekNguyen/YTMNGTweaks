@@ -41,8 +41,8 @@
 - (NSString *)query;
 - (void)ytmng_installNativeSearch;
 - (void)ytmng_submitQuery:(NSString *)query;
-- (void)ytmng_resetSearch;
 - (void)ytmng_syncQueryFromYouTube;
+- (void)ytmng_clearSuggestions;
 @end
 
 static char kSuggestionsKey;
@@ -53,6 +53,15 @@ static char kSearchBarKey;
 // bleeding off the screen edges.
 static const CGFloat YTMNGSearchBarInsetH = 8.0;
 static const CGFloat YTMNGSearchBarInsetV = 4.0;
+
+// The last query that was actually searched, kept for the life of the process.
+//
+// YouTube cannot be relied on to hold this for us. The tab bar Search item goes
+// through -didPressSearchButton:, which opens search fresh, so -latestQuery is
+// nil by the time the screen appears -- and mirroring it into the field was
+// what kept wiping the query. Stock YouTube's behaviour is "the box still says
+// what you last searched", so keep that value on our side.
+static NSString *YTMNGLastQuery = nil;
 
 static BOOL nativeSearchEnabled(void) {
     return YTMNGGetBool(YTMNGNativeSearchKey);
@@ -147,32 +156,20 @@ static NSString *suggestionText(id suggestion) {
 }
 
 %new
-- (void)ytmng_resetSearch {
-    UISearchBar *searchBar = objc_getAssociatedObject(self, &kSearchBarKey);
-    UITableView *table = objc_getAssociatedObject(self, &kTableKey);
-
-    searchBar.text = @"";
+- (void)ytmng_clearSuggestions {
     objc_setAssociatedObject(self, &kSuggestionsKey, [NSArray array], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    [table reloadData];
-
-    // Clear YouTube's copy too, otherwise it keeps serving suggestions for the
-    // old query and the next -setSuggestions: repopulates our list with it.
-    if ([self respondsToSelector:@selector(setSearchText:forceRefreshSuggestions:)])
-        [self setSearchText:@"" forceRefreshSuggestions:NO];
+    [(UITableView *)objc_getAssociatedObject(self, &kTableKey) reloadData];
 }
 
-// Mirrors YouTube's own idea of the current query into the field.
+// Fills the field with the query the user last searched for.
 //
-// The first attempt at fixing stale text cleared the field on every appearance,
-// which broke the behaviour it was meant to protect: stock YouTube keeps the
-// query when you come back from a results page, so you can edit and re-run it.
-// Clearing unconditionally threw that away.
+// Order of preference: YouTube's -latestQuery when it has one (it was set by
+// something on this screen, e.g. a voice search), then our own record of the
+// last submitted query. Crucially, an empty value never overwrites the field --
+// that was the bug that kept clearing it.
 //
-// YouTube already tracks this (-latestQuery, falling back to -query), and it is
-// the same value the results page was built from -- so mirroring it gives both
-// halves for free: the query persists when returning from results, and it is
-// empty when search is opened fresh from another screen. No guessing about
-// which case we are in.
+// Suggestions for the pre-filled query are requested straight away, so the
+// list is populated on arrival rather than staying blank until the user types.
 %new
 - (void)ytmng_syncQueryFromYouTube {
     UISearchBar *searchBar = objc_getAssociatedObject(self, &kSearchBarKey);
@@ -180,19 +177,21 @@ static NSString *suggestionText(id suggestion) {
 
     NSString *query = nil;
     if ([self respondsToSelector:@selector(latestQuery)]) query = [self latestQuery];
-    if (query.length == 0 && [self respondsToSelector:@selector(query)]) query = [self query];
+    if (query.length == 0) query = YTMNGLastQuery;
 
-    if (![searchBar.text isEqualToString:query ?: @""]) searchBar.text = query ?: @"";
+    [self ytmng_clearSuggestions];
+    if (query.length == 0) return;
 
-    // The suggestion list belongs to the previous visit either way; YouTube
-    // refills it as soon as the field is edited.
-    objc_setAssociatedObject(self, &kSuggestionsKey, [NSArray array], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    [(UITableView *)objc_getAssociatedObject(self, &kTableKey) reloadData];
+    if (![searchBar.text isEqualToString:query]) searchBar.text = query;
+    if ([self respondsToSelector:@selector(setSearchText:forceRefreshSuggestions:)])
+        [self setSearchText:query forceRefreshSuggestions:YES];
 }
 
 %new
 - (void)ytmng_submitQuery:(NSString *)query {
+    query = [query stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if (query.length == 0) return;
+    YTMNGLastQuery = [query copy];
     [(UISearchBar *)objc_getAssociatedObject(self, &kSearchBarKey) resignFirstResponder];
     if ([self respondsToSelector:@selector(performSearch:selectedIndexPath:searchMethod:)])
         [self performSearch:query selectedIndexPath:nil searchMethod:0];
@@ -214,7 +213,13 @@ static NSString *suggestionText(id suggestion) {
 %new
 - (void)searchBarCancelButtonClicked:(UISearchBar *)searchBar {
     [searchBar resignFirstResponder];
-    [self ytmng_resetSearch];
+
+    // Cancel leaves search; it does not forget the query. Stock YouTube still
+    // shows your last search when you come back, so only throw away the
+    // (now stale) suggestion list. Restore the field too: an edit that was
+    // abandoned should not stick, the last *searched* query should.
+    [self ytmng_clearSuggestions];
+    if (YTMNGLastQuery.length > 0) searchBar.text = YTMNGLastQuery;
 
     // YouTube owns how this screen was presented (pushed, or grafted onto the
     // root VC), so let it tear itself down where it can; the navigation
@@ -304,7 +309,23 @@ static NSString *suggestionText(id suggestion) {
     // -ytmng_syncQueryFromYouTube). Selecting it rather than parking the caret
     // at the end means typing replaces the old query -- the useful default --
     // while a tap still drops in to edit or re-run it.
-    if (searchBar.text.length > 0) [searchBar.searchTextField selectAll:nil];
+    //
+    // Deferred a turn: -selectAll: is ignored until the field has finished
+    // becoming first responder, which happens after this method returns.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (searchBar.isFirstResponder && searchBar.text.length > 0)
+            [searchBar.searchTextField selectAll:nil];
+    });
+
+    [[NSNotificationCenter defaultCenter] postNotificationName:YTMNGSearchVisibilityNotification
+                                                        object:@YES];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    %orig;
+    if (!nativeSearchEnabled()) return;
+    [[NSNotificationCenter defaultCenter] postNotificationName:YTMNGSearchVisibilityNotification
+                                                        object:@NO];
 }
 
 // YouTube keeps this controller alive and re-presents it, so the field has to

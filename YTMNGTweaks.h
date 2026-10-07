@@ -58,6 +58,10 @@ extern const NSUInteger YTMNGHideableTabsCount;
 // Hides YouTube's own search pill and results-page search field.
 #define YTMNGHideYouTubeSearchKey @"YTMNGHideYouTubeSearch"
 
+// Posted by NativeSearch.x with object @YES / @NO as the search screen shows and
+// hides, so the tab bar can step out of the way of the bottom-docked field.
+#define YTMNGSearchVisibilityNotification @"YTMNGSearchVisibilityChanged"
+
 BOOL YTMNGNativeTabBarEnabled(void);
 BOOL YTMNGGetBool(NSString *key);
 void YTMNGSetBool(NSString *key, BOOL value);
