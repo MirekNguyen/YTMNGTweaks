@@ -21,8 +21,17 @@
 
 #import "YTMNGTweaks.h"
 
+// Only hide YouTube's fields when there is something to replace them. With the
+// tab bar Search item off, hiding these would remove every way into search --
+// a dead end the settings let you walk into. Requiring the replacement makes
+// that combination impossible rather than merely discouraged.
+static BOOL replacementAvailable(void) {
+    return YTMNGGetBool(YTMNGNativeTabBarKey) && YTMNGGetBool(YTMNGTabBarSearchKey);
+}
+
 static void hideSearchWidget(id view) {
     if (!YTMNGGetBool(YTMNGHideYouTubeSearchKey)) return;
+    if (!replacementAvailable()) return;
 
     UIView *widget = view;
     if (!widget.hidden) widget.hidden = YES;

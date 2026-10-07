@@ -162,7 +162,8 @@ static NSArray *appendCategory(NSArray *categories) {
         switchItemWithTitle:@"Hide YouTube's search bar"
            titleDescription:@"Removes the \"Search YouTube\" pill and the "
                             @"results-page search field, leaving the tab bar "
-                            @"search button as the only way in."
+                            @"Search item as the only way in. Only applies "
+                            @"while \"Search in the tab bar\" is on."
     accessibilityIdentifier:nil
                    switchOn:YTMNGGetBool(YTMNGHideYouTubeSearchKey)
                 switchBlock:^BOOL(id cell, BOOL enabled) {
