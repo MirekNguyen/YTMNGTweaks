@@ -25,7 +25,7 @@ Broader workspace context: see the workspace-level `AGENTS.md` one directory up.
 | `NativeTabBar.x` | Real `UITabBar` + SF Symbols replacing the pivot bar; taps forwarded to `-[YTPivotBarViewController didTapItemWithRenderer:]` via the `_renderer` ivar. Selection is restored from `YTPivotBarItemView -selected` at build time and re-synced from `YTPivotBarViewController -selectedPivotIdentifier` on layout, because `-selectItemWithPivotIdentifier:` fires before the tab bar exists. Also owns the optional detached glass search button, which calls `YTHeaderViewController -didPressSearchButton:`. |
 | `SearchGlass.x` | Glass view behind `YTSearchBoxView` (associated object `kGlassViewKey`). **`YTSearchBarView` is deliberately not hooked** — it is a `UITextField` subclass and inserting a subview into it drew the capsule across the whole topbar. |
 | `HideSearchBar.x` | Hides `YTSearchBoxView` (the "Search YouTube" pill, topbar + Home zero state) and `YTSearchBarView` (results-page field). Key `YTMNGHideYouTubeSearch`. Entry point becomes the tab bar button only. |
-| `NativeSearch.x` | Native UIKit search bar driving YouTube's own suggestions (`setSearchText:forceRefreshSuggestions:`, `-setSuggestions:`, `performSearch:selectedIndexPath:searchMethod:`). Results are Elements payloads, rendered by YouTube. |
+| `NativeSearch.x` | Bottom-docked (Photos-style, `keyboardLayoutGuide`) native field + YouTube suggestions. Last query is kept in process-wide `YTMNGLastQuery`, **not** mirrored from `-latestQuery` (nil when search is opened from the tab bar, which is what kept clearing it). Cancel never forgets the query. Posts `YTMNGSearchVisibilityNotification` so the tab bar hides over the field. |
 | `HeaderGlass.x` | Glass capsule grouping header icon buttons (≤64pt per side), pad H10/V6. Skips buttons with no drawn content and clamps to the **safe area**, not `bounds` — otherwise it drew empty grey blobs and a stray circle over the status bar. |
 | `ChannelHeader.x` | Hides `subscribeSwitch` / `sponsorButton` in `YTC4TabbedHeaderView -layoutSubviews`. |
 
@@ -65,3 +65,7 @@ Append one line per session. Newest last.
   (`HideSearchBar.x`); tab bar search button expands into a capsule before the
   search screen and pre-fills + selects the last query; capped the button
   diameter so it stops getting clipped by the pivot bar bounds.
+- **2026-10-07** — v2.11.0: search became a tab bar item (Apple Music style), detached
+  pill removed. v2.11.1: search keeps the last query; tab bar hides while search is
+  open; hiding YouTube's search fields requires the tab bar Search item.
+
