@@ -62,6 +62,11 @@ static char kRenderersKey;
 static char kPendingSelectionKey;
 static char kExpandingKey;
 
+// True while the search screen is on screen. Process-wide because there is one
+// search screen and one tab bar, and the notification that sets it can arrive
+// before or after any given pivot bar lays out.
+static BOOL YTMNGSearchScreenVisible = NO;
+
 // Marks the search item so a tap on it can be told apart from a real tab.
 static NSString *const YTMNGSearchIdentifier = @"YTMNGSearch";
 
@@ -209,6 +214,24 @@ static UIViewController *findSearchHost(UIViewController *root) {
         tabBar.unselectedItemTintColor = [UIColor secondaryLabelColor];
         [self addSubview:tabBar];
         objc_setAssociatedObject(self, &kTabBarKey, tabBar, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+        // The search field docks at the bottom, exactly where this bar is. If
+        // YouTube leaves the pivot bar up on the search screen, the bar covers
+        // the field -- so get out of the way for as long as search is showing,
+        // rather than for a guessed animation duration.
+        __weak UITabBar *weakBar = tabBar;
+        [[NSNotificationCenter defaultCenter]
+            addObserverForName:YTMNGSearchVisibilityNotification
+                        object:nil
+                         queue:[NSOperationQueue mainQueue]
+                    usingBlock:^(NSNotification *note) {
+            YTMNGSearchScreenVisible = [note.object boolValue];
+            UITabBar *bar = weakBar;
+            if (!bar) return;
+            [UIView animateWithDuration:0.2 animations:^{
+                bar.alpha = YTMNGSearchScreenVisible ? 0.0 : 1.0;
+            }];
+        }];
     }
 
     tabBar.items = items;
@@ -296,7 +319,11 @@ static UIViewController *findSearchHost(UIViewController *root) {
         // normal by the time it is next visible.
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
-            tabBar.alpha = 1.0;
+            // Only restore if search did not actually open (e.g. the tap was
+            // swallowed). If it did, the visibility notification owns the
+            // bar's alpha from here, and bringing it back would cover the
+            // bottom-docked field.
+            if (!YTMNGSearchScreenVisible) tabBar.alpha = 1.0;
             objc_setAssociatedObject(self, &kExpandingKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             [self setNeedsLayout];
         });
@@ -374,9 +401,13 @@ static UIViewController *findSearchHost(UIViewController *root) {
 
     // Search lives inside the bar now, so the bar spans the full width.
     // Skipped mid-morph, when the animation owns the bar.
-    if (![objc_getAssociatedObject(self, &kExpandingKey) boolValue] &&
-        !CGRectEqualToRect(tabBar.frame, self.bounds))
+    BOOL expanding = [objc_getAssociatedObject(self, &kExpandingKey) boolValue];
+    if (!expanding && !CGRectEqualToRect(tabBar.frame, self.bounds))
         tabBar.frame = self.bounds;
+
+    // A bar rebuilt while search is open would otherwise appear at full
+    // opacity on top of the bottom-docked field.
+    if (!expanding) tabBar.alpha = YTMNGSearchScreenVisible ? 0.0 : 1.0;
 
     [self bringSubviewToFront:tabBar];
     [self ytmng_syncSelectionFromYouTube];
